@@ -352,7 +352,7 @@ mod tests {
         let input = "enp0s31f6";
         assert_eq!(InterfaceName::from_str(input).unwrap().as_str(), input);
 
-        let ifr_name = (*b"enp0s31f6\0\0\0\0\0\0\0").map(|b| b as i8);
+        let ifr_name = (*b"enp0s31f6\0\0\0\0\0\0\0").map(|b| b as libc::c_char);
         assert_eq!(
             InterfaceName::from_str(input).unwrap().to_ifr_name(),
             ifr_name

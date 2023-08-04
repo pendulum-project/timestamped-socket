@@ -1,8 +1,4 @@
-use std::{
-    io::IoSliceMut,
-    net::SocketAddr,
-    os::fd::{AsRawFd, FromRawFd, RawFd},
-};
+use std::{io::IoSliceMut, net::SocketAddr};
 
 pub(crate) use exceptional_condition_fd::exceptional_condition_fd;
 pub(crate) use set_timestamping_options::set_timestamping_options;
@@ -15,6 +11,8 @@ use super::{
     },
     interface::{sockaddr_storage_to_socket_addr, InterfaceName},
 };
+
+use std::os::unix::prelude::{AsRawFd, FromRawFd, RawFd};
 
 pub struct RawUdpSocket(RawFd);
 

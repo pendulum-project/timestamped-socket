@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+use crate::timestamped_udp_socket::LibcTimestamp;
+
 pub const fn control_message_space<T>() -> usize {
     // Safety: CMSG_SPACE is safe to call
     (unsafe { libc::CMSG_SPACE((std::mem::size_of::<T>()) as _) }) as usize
@@ -45,10 +47,15 @@ impl<'a> ControlMessageIterator<'a> {
 }
 
 pub enum ControlMessage {
-    Timestamping(libc::timespec),
+    Timestamping(LibcTimestamp),
     ReceiveError(libc::sock_extended_err),
     Other(libc::cmsghdr),
 }
+
+#[cfg(target_os = "linux")]
+const SCM_TIMESTAMP_NS: libc::c_int = libc::SCM_TIMESTAMPNS;
+#[cfg(target_os = "freebsd")]
+const SCM_TIMESTAMP_NS: libc::c_int = libc::SCM_REALTIME;
 
 impl<'a> Iterator for ControlMessageIterator<'a> {
     type Item = ControlMessage;
@@ -74,8 +81,8 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
             #[cfg(target_os = "linux")]
             (libc::SOL_SOCKET, libc::SCM_TIMESTAMPING) => {
                 // Safety:
-                // current_msg was constructed from a pointer that pointed to a valid control
-                // message. SO_TIMESTAMPING always has 3 timespecs in the data
+                // current_msg was constructed from a pointer that pointed to a valid control message.
+                // SO_TIMESTAMPING always has 3 timespecs in the data
                 let cmsg_data =
                     unsafe { libc::CMSG_DATA(current_msg) } as *const [libc::timespec; 3];
 
@@ -88,9 +95,31 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
                     software
                 };
 
-                ControlMessage::Timestamping(timespec)
+                ControlMessage::Timestamping(LibcTimestamp::from_timespec(timespec))
             }
 
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            (libc::SOL_SOCKET, SCM_TIMESTAMP_NS) => {
+                // Safety:
+                // current_msg was constructed from a pointer that pointed to a valid control message.
+                // SO_TIMESTAMPNS always has a timespec in the data
+                let cmsg_data = unsafe { libc::CMSG_DATA(current_msg) } as *const libc::timespec;
+
+                let timespec = unsafe { std::ptr::read_unaligned(cmsg_data) };
+
+                ControlMessage::Timestamping(LibcTimestamp::from_timespec(timespec))
+            }
+
+            (libc::SOL_SOCKET, libc::SCM_TIMESTAMP) => {
+                // Safety:
+                // current_msg was constructed from a pointer that pointed to a valid control message.
+                // SO_TIMESTAMP always has a timeval in the data
+                let cmsg_data = unsafe { libc::CMSG_DATA(current_msg) } as *const libc::timeval;
+                let timeval = unsafe { std::ptr::read_unaligned(cmsg_data) };
+                ControlMessage::Timestamping(LibcTimestamp::from_timeval(timeval))
+            }
+
+            #[cfg(target_os = "linux")]
             (libc::SOL_IP, libc::IP_RECVERR) | (libc::SOL_IPV6, libc::IPV6_RECVERR) => {
                 // this is part of how timestamps are reported.
                 // Safety:

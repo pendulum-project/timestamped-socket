@@ -130,15 +130,14 @@ pub enum LibcTimestamp {
 }
 
 impl LibcTimestamp {
-    fn from_timespec(timespec: libc::timespec) -> Self {
+    pub fn from_timespec(timespec: libc::timespec) -> Self {
         Self::TimeSpec {
             seconds: timespec.tv_sec as _,
             nanos: timespec.tv_nsec as _,
         }
     }
 
-    #[allow(unused)]
-    fn from_timeval(timespec: libc::timeval) -> Self {
+    pub fn from_timeval(timespec: libc::timeval) -> Self {
         Self::TimeVal {
             seconds: timespec.tv_sec as _,
             micros: timespec.tv_usec as _,
@@ -188,7 +187,7 @@ fn recv_with_timestamp(
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "clock error"))?;
 
     let mut timestamp = LibcTimestamp::TimeSpec {
-        seconds: now.seconds,
+        seconds: now.seconds as _,
         nanos: now.nanos as _,
     };
 
@@ -196,8 +195,8 @@ fn recv_with_timestamp(
     // in practice
     for msg in control_messages {
         match msg {
-            ControlMessage::Timestamping(timespec) => {
-                timestamp = LibcTimestamp::from_timespec(timespec);
+            ControlMessage::Timestamping(recv_timespec) => {
+                timestamp = recv_timespec;
             }
 
             ControlMessage::ReceiveError(_error) => {
@@ -251,7 +250,7 @@ fn fetch_send_timestamp_help(
     for msg in control_messages {
         match msg {
             ControlMessage::Timestamping(timestamp) => {
-                send_ts = Some(LibcTimestamp::from_timespec(timestamp));
+                send_ts = Some(timestamp);
             }
 
             ControlMessage::ReceiveError(error) => {
