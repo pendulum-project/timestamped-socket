@@ -1,0 +1,19 @@
+[package]
+name = "timestamped-socket"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.145"
+tokio = { version = "1.29.1", features = ["net", "time"] }
+tracing = { version = "0.1.37", default-features = false, features = ["std"] }
+clock-steering = { git = "https://github.com/pendulum-project/clock-steering.git", rev = "4628f18" }
+
+[dev-dependencies]
+tokio = { version = "1.29.1", features = ["full"] }
+
+[features]
+default = ["std"]
+std = []
