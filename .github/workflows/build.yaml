@@ -1,0 +1,141 @@
+name: checks
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 4 * * *'
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          persist-credentials: false
+      - name: Install rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          toolchain: stable
+          override: true
+          default: true
+          components: rustfmt
+      - name: Check formatting
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505
+        with:
+          command: fmt
+          args: --all --check
+
+  build:
+    name: Clippy & Test ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust:
+          - 1.65.0
+        target:
+          - ""
+        features:
+          - ""
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          persist-credentials: false
+      - name: Install ${{ matrix.rust }} toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: cargo build
+        run: cargo build ${{ matrix.features }}
+      - name: cargo test
+        run: cargo test
+        env:
+          RUST_BACKTRACE: 1
+
+  build-musl:
+    name: Clippy & Test ubuntu-latest / MUSL 
+    runs-on: ubuntu-latest 
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          persist-credentials: false
+      - name: Install rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          toolchain: stable
+          override: true
+          default: true
+          components: clippy
+          target: x86_64-unknown-linux-musl
+      - name: cargo build
+        run: cargo build ${{ matrix.features }}
+      - name: cargo test
+        run: cargo test
+        env:
+          RUST_BACKTRACE: 1
+
+  build-freebsd:
+    name: Clippy & Test FreeBSD
+    runs-on: macos-12
+    steps:
+      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+      - name: test on freebsd
+        uses: vmactions/freebsd-vm@v0
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile default --default-toolchain 1.65.0 # cannot use `--profile minimal` because of clippy
+            echo "~~~~ rustc --version ~~~~"
+            $HOME/.cargo/bin/rustc --version
+            echo "~~~~ freebsd-version ~~~~"
+            freebsd-version
+          run: $HOME/.cargo/bin/cargo clippy -- -D warnings && $HOME/.cargo/bin/cargo build && $HOME/.cargo/bin/cargo test
+
+  clippy-raspberry-pi:
+    name: ClippyRaspberryPi
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+        with:
+          persist-credentials: false
+      - name: Install rust toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
+        with:
+          toolchain: stable
+          override: true
+          default: true
+          components: clippy
+          target: armv7-unknown-linux-gnueabihf
+      # Use zig as our C compiler for convenient cross-compilation. We run into rustls having a dependency on `ring`.
+      # This crate uses C and assembly code, and because of its build scripts, `cargo clippy` needs to be able to compile
+      # that code for our target.
+      - uses: goto-bus-stop/setup-zig@6fede2f0550d71291c0accf2834b216e69a2d67a
+        with:
+          version: 0.9.0
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@e4052c038b0e2fb689083c873312394ba5eb0a37
+        with:
+          tool: cargo-zigbuild
+      - name: Run clippy
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505
+        env:
+          TARGET_CC: "/home/runner/.cargo/bin/cargo-zigbuild zig cc -- -target arm-linux-gnueabihf -mcpu=generic+v7a+vfp3-d32+thumb2-neon -g"
+        with:
+          command: clippy
+          args: --target armv7-unknown-linux-gnueabihf --workspace --all-targets -- -D warnings
