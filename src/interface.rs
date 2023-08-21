@@ -176,6 +176,17 @@ impl std::str::FromStr for InterfaceName {
     }
 }
 
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for InterfaceName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(|_| serde::de::Error::custom("invalid interface name"))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InterfaceDescriptor {
     pub interface_name: Option<InterfaceName>,
