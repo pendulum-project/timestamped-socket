@@ -9,7 +9,7 @@ edition = "2021"
 libc = "0.2.145"
 tokio = { version = "1.29.1", features = ["net", "time"] }
 tracing = { version = "0.1.37", default-features = false, features = ["std"] }
-clock-steering = { git = "https://github.com/pendulum-project/clock-steering.git", rev = "3ab6721" }
+clock-steering = { git = "https://github.com/pendulum-project/clock-steering.git", rev = "46974d35e30d9cf1dc0caef7bac71fda478b8efa" }
 serde = { version = "1.0.145", features = ["derive"], optional = true }
 
 [dev-dependencies]
