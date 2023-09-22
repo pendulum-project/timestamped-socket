@@ -1,20 +1,20 @@
 use std::marker::PhantomData;
 
-use crate::timestamped_udp_socket::LibcTimestamp;
+use crate::socket::Timestamp;
 
-pub const fn control_message_space<T>() -> usize {
+pub(crate) const fn control_message_space<T>() -> usize {
     // Safety: CMSG_SPACE is safe to call
     (unsafe { libc::CMSG_SPACE((std::mem::size_of::<T>()) as _) }) as usize
 }
 
-pub enum MessageQueue {
+pub(crate) enum MessageQueue {
     Normal,
     Error,
 }
 
 // these invariants and that the fields of ControlMessageIterator
 // are not modified outside these two functions.
-pub struct ControlMessageIterator<'a> {
+pub(crate) struct ControlMessageIterator<'a> {
     mhdr: libc::msghdr,
     next_msg: *const libc::cmsghdr,
     phantom: PhantomData<&'a [u8]>,
@@ -46,8 +46,11 @@ impl<'a> ControlMessageIterator<'a> {
     }
 }
 
-pub enum ControlMessage {
-    Timestamping(LibcTimestamp),
+pub(crate) enum ControlMessage {
+    Timestamping {
+        software: Option<Timestamp>,
+        hardware: Option<Timestamp>,
+    },
     ReceiveError(libc::sock_extended_err),
     Other(libc::cmsghdr),
 }
@@ -88,14 +91,21 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
 
                 let [software, _, hardware] = unsafe { std::ptr::read_unaligned(cmsg_data) };
 
-                // if defined, we prefer the hardware over the software timestamp
-                let timespec = if hardware.tv_sec != 0 && hardware.tv_nsec != 0 {
-                    hardware
+                // Both 0 indicates it is not present
+                let hardware = if hardware.tv_sec != 0 || hardware.tv_nsec != 0 {
+                    Some(Timestamp::from_timespec(hardware))
                 } else {
-                    software
+                    None
                 };
 
-                ControlMessage::Timestamping(LibcTimestamp::from_timespec(timespec))
+                // Both 0 indicates it is not present
+                let software = if software.tv_sec != 0 || software.tv_nsec != 0 {
+                    Some(Timestamp::from_timespec(software))
+                } else {
+                    None
+                };
+
+                ControlMessage::Timestamping { software, hardware }
             }
 
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -107,7 +117,10 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
 
                 let timespec = unsafe { std::ptr::read_unaligned(cmsg_data) };
 
-                ControlMessage::Timestamping(LibcTimestamp::from_timespec(timespec))
+                ControlMessage::Timestamping {
+                    software: Some(Timestamp::from_timespec(timespec)),
+                    hardware: None,
+                }
             }
 
             (libc::SOL_SOCKET, libc::SCM_TIMESTAMP) => {
@@ -116,7 +129,10 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
                 // SO_TIMESTAMP always has a timeval in the data
                 let cmsg_data = unsafe { libc::CMSG_DATA(current_msg) } as *const libc::timeval;
                 let timeval = unsafe { std::ptr::read_unaligned(cmsg_data) };
-                ControlMessage::Timestamping(LibcTimestamp::from_timeval(timeval))
+                ControlMessage::Timestamping {
+                    software: Some(Timestamp::from_timeval(timeval)),
+                    hardware: None,
+                }
             }
 
             #[cfg(target_os = "linux")]
@@ -138,7 +154,7 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
     }
 }
 
-pub fn zeroed_sockaddr_storage() -> libc::sockaddr_storage {
+pub(crate) fn zeroed_sockaddr_storage() -> libc::sockaddr_storage {
     // a zeroed-out sockaddr storage is semantically valid, because a ss_family with
     // value 0 is libc::AF_UNSPEC. Hence the rest of the data does not come with
     // any constraints Safety:
@@ -146,7 +162,7 @@ pub fn zeroed_sockaddr_storage() -> libc::sockaddr_storage {
     unsafe { std::mem::MaybeUninit::zeroed().assume_init() }
 }
 
-pub fn empty_msghdr() -> libc::msghdr {
+pub(crate) fn empty_msghdr() -> libc::msghdr {
     // On `target_env = "musl"`, there are several private padding fields.
     // the position of these padding fields depends on the system endianness,
     // so keeping making them public does not really help.
