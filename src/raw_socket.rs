@@ -67,6 +67,15 @@ impl RawSocket {
     }
 
     pub(crate) fn ip_multicast_if(&self, interface_name: InterfaceName) -> std::io::Result<()> {
+        let interface_descriptor = InterfaceDescriptor {
+            interface_name: Some(interface_name),
+            mode: crate::interface::LinuxNetworkMode::Ipv4,
+        };
+
+        let interface_index = interface_descriptor
+            .get_index()
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
+
         let request = libc::ip_mreqn {
             imr_multiaddr: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
@@ -74,12 +83,7 @@ impl RawSocket {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface_name),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: interface_index as _,
         };
 
         cerr(unsafe {
@@ -95,21 +99,25 @@ impl RawSocket {
     }
 
     pub(crate) fn ipv6_multicast_if(&self, interface_name: InterfaceName) -> std::io::Result<()> {
-        let index = InterfaceDescriptor {
+        let interface_descriptor = InterfaceDescriptor {
             interface_name: Some(interface_name),
             mode: crate::interface::LinuxNetworkMode::Ipv6,
-        }
-        .get_index()
-        .ok_or(std::io::ErrorKind::InvalidInput)?;
+        };
+
+        let interface_index = interface_descriptor
+            .get_index()
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
+
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
                 libc::IPPROTO_IPV6,
                 libc::IPV6_MULTICAST_IF,
-                &index as *const _ as *const _,
-                std::mem::size_of_val(&index) as _,
+                &interface_index as *const _ as *const _,
+                std::mem::size_of_val(&interface_index) as _,
             )
         })?;
+
         Ok(())
     }
 
