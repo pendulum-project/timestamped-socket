@@ -156,7 +156,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     ) -> std::io::Result<Option<Timestamp>> {
         const TIMEOUT: Duration = Duration::from_millis(200);
 
-        if let Ok(timestamp) = tokio::time::timeout(TIMEOUT, async {
+        let fut = async {
             loop {
                 self.errqueue_waiter.wait().await?;
 
@@ -169,12 +169,11 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     }
                 }
             }
-        })
-        .await
-        {
-            timestamp
-        } else {
-            Ok(None)
+        };
+
+        match tokio::time::timeout(TIMEOUT, fut).await {
+            Ok(timestamp) => timestamp,
+            Err(_) => Ok(None),
         }
     }
 
