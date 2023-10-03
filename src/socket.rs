@@ -494,12 +494,12 @@ pub fn open_interface_udp6(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::IpAddr, str::FromStr};
+    use std::net::IpAddr;
 
     #[tokio::test]
     async fn test_open_udp6() {
         let mut a = open_interface_udp6(
-            InterfaceName::from_str("lo").unwrap(),
+            InterfaceName::LOOPBACK,
             5123,
             super::InterfaceTimestampMode::None,
         )
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn test_open_udp4() {
         let mut a = open_interface_udp4(
-            InterfaceName::from_str("lo").unwrap(),
+            InterfaceName::LOOPBACK,
             5124,
             super::InterfaceTimestampMode::None,
         )
