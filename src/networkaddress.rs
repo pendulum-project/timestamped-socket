@@ -59,16 +59,21 @@ impl NetworkAddress for SocketAddrV4 {
                 >= std::mem::align_of::<libc::sockaddr_in>()
         );
 
-        let mut result = zeroed_sockaddr_storage();
-        // Safety: the above assertions guarantee that alignment and size are correct.
-        // the resulting reference won't outlast the function, and result lives the entire
-        // duration of the function
-        let out = unsafe { &mut (*(&mut result as *mut _ as *mut libc::sockaddr_in)) };
-        out.sin_family = libc::AF_INET as _;
-        out.sin_port = u16::from_ne_bytes(self.port().to_be_bytes());
-        out.sin_addr = libc::in_addr {
-            s_addr: u32::from_ne_bytes(self.ip().octets()),
+        let sockaddr = libc::sockaddr_in {
+            sin_family: libc::AF_INET as _,
+            sin_port: u16::from_ne_bytes(self.port().to_be_bytes()),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(self.ip().octets()),
+            },
+            sin_zero: [0; 8],
         };
+
+        // # Safety
+        //
+        // The assertions above guarantee the validity of the cast. The asserts and the fact that
+        // result is allocated on the stack guarantee the validity of the write
+        let mut result = zeroed_sockaddr_storage();
+        unsafe { std::ptr::write(&mut result as *mut _ as *mut libc::sockaddr_in, sockaddr) };
 
         result
     }
@@ -98,6 +103,20 @@ impl NetworkAddress for SocketAddrV4 {
     }
 }
 
+fn get_interface_index(
+    interface: InterfaceName,
+    mode: crate::interface::LinuxNetworkMode,
+) -> std::io::Result<u32> {
+    let interface_descriptor = InterfaceDescriptor {
+        interface_name: Some(interface),
+        mode,
+    };
+
+    interface_descriptor
+        .get_index()
+        .ok_or(std::io::ErrorKind::InvalidInput.into())
+}
+
 impl SealedMC for SocketAddrV4 {}
 
 impl MulticastJoinable for SocketAddrV4 {
@@ -107,6 +126,8 @@ impl MulticastJoinable for SocketAddrV4 {
         interface: InterfaceName,
         _token: PrivateToken,
     ) -> std::io::Result<()> {
+        let mode = crate::interface::LinuxNetworkMode::Ipv4;
+
         let request = libc::ip_mreqn {
             imr_multiaddr: libc::in_addr {
                 s_addr: u32::from_ne_bytes(self.ip().octets()),
@@ -114,21 +135,18 @@ impl MulticastJoinable for SocketAddrV4 {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: get_interface_index(interface, mode)? as _,
         };
-        // Safety:
+
+        // # Safety
+        //
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IP/IP_ADD_MEMBERSHIP
         cerr(unsafe {
             libc::setsockopt(
                 socket,
                 libc::IPPROTO_IP,
                 libc::IP_ADD_MEMBERSHIP,
-                &request as *const _ as *const _,
+                &request as *const libc::ip_mreqn as *const libc::c_void,
                 std::mem::size_of_val(&request) as _,
             )
         })?;
@@ -141,6 +159,8 @@ impl MulticastJoinable for SocketAddrV4 {
         interface: InterfaceName,
         _token: PrivateToken,
     ) -> std::io::Result<()> {
+        let mode = crate::interface::LinuxNetworkMode::Ipv4;
+
         let request = libc::ip_mreqn {
             imr_multiaddr: libc::in_addr {
                 s_addr: u32::from_ne_bytes(self.ip().octets()),
@@ -148,21 +168,18 @@ impl MulticastJoinable for SocketAddrV4 {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: get_interface_index(interface, mode)? as _,
         };
-        // Safety:
+
+        // # Safety
+        //
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IP/IP_DROP_MEMBERSHIP
         cerr(unsafe {
             libc::setsockopt(
                 socket,
                 libc::IPPROTO_IP,
                 libc::IP_DROP_MEMBERSHIP,
-                &request as *const _ as *const _,
+                &request as *const libc::ip_mreqn as *const libc::c_void,
                 std::mem::size_of_val(&request) as _,
             )
         })?;
@@ -183,18 +200,22 @@ impl NetworkAddress for SocketAddrV6 {
                 >= std::mem::align_of::<libc::sockaddr_in6>()
         );
 
-        let mut result = zeroed_sockaddr_storage();
-        // Safety: the above assertions guarantee that alignment and size are correct.
-        // the resulting reference won't outlast the function, and result lives the entire
-        // duration of the function
-        let out = unsafe { &mut (*(&mut result as *mut _ as *mut libc::sockaddr_in6)) };
-        out.sin6_family = libc::AF_INET6 as _;
-        out.sin6_port = u16::from_ne_bytes(self.port().to_be_bytes());
-        out.sin6_addr = libc::in6_addr {
-            s6_addr: self.ip().octets(),
+        let sockaddr = libc::sockaddr_in6 {
+            sin6_family: libc::AF_INET6 as _,
+            sin6_port: u16::from_ne_bytes(self.port().to_be_bytes()),
+            sin6_addr: libc::in6_addr {
+                s6_addr: self.ip().octets(),
+            },
+            sin6_flowinfo: self.flowinfo(),
+            sin6_scope_id: self.scope_id(),
         };
-        out.sin6_flowinfo = self.flowinfo();
-        out.sin6_scope_id = self.scope_id();
+
+        // # Safety
+        //
+        // The assertions above guarantee the validity of the cast. The asserts and the fact that
+        // result is allocated on the stack guarantee the validity of the write
+        let mut result = zeroed_sockaddr_storage();
+        unsafe { std::ptr::write(&mut result as *mut _ as *mut libc::sockaddr_in6, sockaddr) };
 
         result
     }
@@ -235,18 +256,17 @@ impl MulticastJoinable for SocketAddrV6 {
         interface: InterfaceName,
         _token: PrivateToken,
     ) -> std::io::Result<()> {
+        let mode = crate::interface::LinuxNetworkMode::Ipv6;
+
         let request = libc::ipv6_mreq {
             ipv6mr_multiaddr: libc::in6_addr {
                 s6_addr: self.ip().octets(),
             },
-            ipv6mr_interface: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            ipv6mr_interface: get_interface_index(interface, mode)? as _,
         };
-        // Safety:
+
+        // # Safety
+        //
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IPV6/IPV6_ADD_MEMBERSHIP
         cerr(unsafe {
             libc::setsockopt(
@@ -266,18 +286,17 @@ impl MulticastJoinable for SocketAddrV6 {
         interface: InterfaceName,
         _token: PrivateToken,
     ) -> std::io::Result<()> {
+        let mode = crate::interface::LinuxNetworkMode::Ipv6;
+
         let request = libc::ipv6_mreq {
             ipv6mr_multiaddr: libc::in6_addr {
                 s6_addr: self.ip().octets(),
             },
-            ipv6mr_interface: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            ipv6mr_interface: get_interface_index(interface, mode)? as _,
         };
-        // Safety:
+
+        // # Safety
+        //
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IPV6/IPV6_DROP_MEMBERSHIP
         cerr(unsafe {
             libc::setsockopt(

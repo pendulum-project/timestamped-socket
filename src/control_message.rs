@@ -157,8 +157,11 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
 pub(crate) fn zeroed_sockaddr_storage() -> libc::sockaddr_storage {
     // a zeroed-out sockaddr storage is semantically valid, because a ss_family with
     // value 0 is libc::AF_UNSPEC. Hence the rest of the data does not come with
-    // any constraints Safety:
-    // the MaybeUninit is zeroed before assumed to be initialized
+    // any constraints
+    //
+    // # Safety
+    //
+    // the MaybeUninit is zeroed before it is assumed to be initialized
     unsafe { std::mem::MaybeUninit::zeroed().assume_init() }
 }
 
@@ -167,7 +170,7 @@ pub(crate) fn empty_msghdr() -> libc::msghdr {
     // the position of these padding fields depends on the system endianness,
     // so keeping making them public does not really help.
     //
-    // Safety:
+    // # Safety
     //
     // all fields are either integer or pointer types. For those types, 0 is a valid
     // value
