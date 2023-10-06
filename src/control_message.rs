@@ -60,6 +60,9 @@ const SCM_TIMESTAMP_NS: libc::c_int = libc::SCM_TIMESTAMPNS;
 #[cfg(target_os = "freebsd")]
 const SCM_TIMESTAMP_NS: libc::c_int = libc::SCM_REALTIME;
 
+#[cfg(target_os = "linux")]
+const PACKET_TX_TIMESTAMP: libc::c_int = 16;
+
 impl<'a> Iterator for ControlMessageIterator<'a> {
     type Item = ControlMessage;
 
@@ -136,7 +139,9 @@ impl<'a> Iterator for ControlMessageIterator<'a> {
             }
 
             #[cfg(target_os = "linux")]
-            (libc::SOL_IP, libc::IP_RECVERR) | (libc::SOL_IPV6, libc::IPV6_RECVERR) => {
+            (libc::SOL_IP, libc::IP_RECVERR)
+            | (libc::SOL_IPV6, libc::IPV6_RECVERR)
+            | (libc::SOL_PACKET, PACKET_TX_TIMESTAMP) => {
                 // this is part of how timestamps are reported.
                 // Safety:
                 // current_msg was constructed from a pointer that pointed to a valid
