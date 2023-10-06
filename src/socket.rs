@@ -437,7 +437,10 @@ pub fn open_interface_udp4(
         timestamping,
         InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
     ) {
-        socket.driver_enable_hardware_timestamping(interface)?;
+        socket.driver_enable_hardware_timestamping(
+            interface,
+            libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+        )?;
     }
     socket.set_nonblocking(true)?;
 
@@ -474,7 +477,10 @@ pub fn open_interface_udp6(
         timestamping,
         InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
     ) {
-        socket.driver_enable_hardware_timestamping(interface)?;
+        socket.driver_enable_hardware_timestamping(
+            interface,
+            libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+        )?;
     }
     socket.set_nonblocking(true)?;
 
