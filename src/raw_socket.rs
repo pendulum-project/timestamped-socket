@@ -356,11 +356,12 @@ impl RawSocket {
     pub(crate) fn driver_enable_hardware_timestamping(
         &self,
         interface: InterfaceName,
+        rx_filter: libc::c_int,
     ) -> std::io::Result<()> {
         let mut tstamp_config = libc::hwtstamp_config {
             flags: 0,
             tx_type: libc::HWTSTAMP_TX_ON as _,
-            rx_filter: libc::HWTSTAMP_FILTER_ALL as _,
+            rx_filter,
         };
 
         let mut ifreq = libc::ifreq {
