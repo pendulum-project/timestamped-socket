@@ -137,6 +137,16 @@ impl InterfaceName {
             None => Ok(None),
         }
     }
+
+    pub fn get_index(self) -> Option<libc::c_uint> {
+        // Temporary implementation until great refactor
+        InterfaceDescriptor {
+            interface_name: Some(self),
+            // doesn't matter
+            mode: LinuxNetworkMode::Ipv4,
+        }
+        .get_index()
+    }
 }
 
 impl std::fmt::Debug for InterfaceName {
@@ -219,7 +229,7 @@ fn interface_does_not_exist() -> std::io::Error {
 }
 
 impl InterfaceDescriptor {
-    pub fn get_index(&self) -> Option<u32> {
+    pub fn get_index(&self) -> Option<libc::c_uint> {
         let name = self.interface_name.as_ref()?;
 
         // # SAFETY

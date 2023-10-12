@@ -9,8 +9,10 @@ use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
     control_message::{control_message_space, ControlMessage, MessageQueue},
-    interface::InterfaceName,
-    networkaddress::{sealed::PrivateToken, MulticastJoinable, NetworkAddress},
+    interface::{InterfaceDescriptor, InterfaceName},
+    networkaddress::{
+        sealed::PrivateToken, EthernetAddress, MacAddress, MulticastJoinable, NetworkAddress,
+    },
     raw_socket::RawSocket,
 };
 
@@ -480,6 +482,57 @@ pub fn open_interface_udp6(
         socket.driver_enable_hardware_timestamping(
             interface,
             libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+        )?;
+    }
+    socket.set_nonblocking(true)?;
+
+    #[cfg(target_os = "linux")]
+    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
+
+    Ok(Socket {
+        timestamp_mode: timestamping,
+        socket: AsyncFd::new(socket)?,
+        #[cfg(target_os = "linux")]
+        errqueue_waiter,
+        send_counter: 0,
+        _addr: PhantomData,
+        _state: PhantomData,
+    })
+}
+
+pub fn open_interface_ethernet(
+    interface: InterfaceName,
+    protocol: u16,
+    timestamping: InterfaceTimestampMode,
+) -> std::io::Result<Socket<EthernetAddress, Open>> {
+    let socket = RawSocket::open(
+        libc::AF_PACKET,
+        libc::SOCK_DGRAM,
+        u16::from_ne_bytes(protocol.to_be_bytes()) as _,
+    )?;
+    socket.bind(
+        EthernetAddress::new(
+            u16::from_ne_bytes(protocol.to_le_bytes()),
+            MacAddress::new([0; 6]),
+            InterfaceDescriptor {
+                interface_name: Some(interface),
+                // Just need a mode, which doesnt matter for index
+                mode: crate::interface::LinuxNetworkMode::Ipv6,
+            }
+            .get_index()
+            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+        )
+        .to_sockaddr(PrivateToken),
+    )?;
+    configure_timestamping(&socket, timestamping)?;
+    #[cfg(target_os = "linux")]
+    if matches!(
+        timestamping,
+        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
+    ) {
+        socket.driver_enable_hardware_timestamping(
+            interface,
+            libc::HWTSTAMP_FILTER_PTP_V2_L2_EVENT as _,
         )?;
     }
     socket.set_nonblocking(true)?;
