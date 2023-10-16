@@ -32,6 +32,10 @@ impl InterfaceData {
             .iter()
             .any(|socket_addr| socket_addr.ip() == address)
     }
+
+    pub fn mac(&self) -> Option<[u8; 6]> {
+        self.mac
+    }
 }
 
 struct InterfaceIterator {
