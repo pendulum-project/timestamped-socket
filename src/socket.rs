@@ -91,8 +91,6 @@ pub struct RecvResult<A> {
 pub struct Socket<A, S> {
     timestamp_mode: InterfaceTimestampMode,
     socket: AsyncFd<RawSocket>,
-    #[cfg(target_os = "linux")]
-    errqueue_waiter: crate::raw_socket::err_queue_waiter::ErrQueueWaiter,
     send_counter: u32,
     _addr: PhantomData<A>,
     _state: PhantomData<S>,
@@ -158,30 +156,40 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     ) -> std::io::Result<Option<Timestamp>> {
         const TIMEOUT: Duration = Duration::from_millis(200);
 
-        if let Ok(timestamp) = tokio::time::timeout(TIMEOUT, async {
-            loop {
-                self.errqueue_waiter.wait().await?;
-
-                match self.fetch_send_timestamp_help(expected_counter) {
-                    Ok(Some(timestamp)) => return Ok(Some(timestamp)),
-                    Ok(None) => continue,
-                    Err(error) => {
-                        tracing::warn!(error = ?error, "Error fetching timestamp");
-                        return Err(error);
-                    }
-                }
-            }
-        })
-        .await
+        match tokio::time::timeout(TIMEOUT, self.fetch_send_timestamp_loop(expected_counter)).await
         {
-            timestamp
-        } else {
-            Ok(None)
+            Ok(res_opt_timestamp) => res_opt_timestamp,
+            Err(_timeout_elapsed) => Ok(None),
         }
     }
 
     #[cfg(target_os = "linux")]
-    fn fetch_send_timestamp_help(
+    async fn fetch_send_timestamp_loop(
+        &self,
+        expected_counter: u32,
+    ) -> std::io::Result<Option<Timestamp>> {
+        loop {
+            // the timestamp being available triggers the error interest
+            let mut guard = self.socket.ready(Interest::ERROR).await?;
+
+            match self.fetch_send_timestamp_try_read(expected_counter) {
+                Ok(Some(timestamp)) => break Ok(Some(timestamp)),
+                Ok(None) => continue,
+                Err(error) => {
+                    if error.kind() == std::io::ErrorKind::WouldBlock {
+                        guard.clear_ready();
+                        continue;
+                    } else {
+                        tracing::warn!(error = ?&error, "Error fetching timestamp");
+                        break Err(error);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fetch_send_timestamp_try_read(
         &self,
         expected_counter: u32,
     ) -> std::io::Result<Option<Timestamp>> {
@@ -190,6 +198,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 
         let mut control_buf = [0; CONTROL_SIZE];
 
+        // NOTE: this read could block!
         let (_, control_messages, _) = self.socket.get_ref().receive_message(
             &mut [],
             &mut control_buf,
@@ -274,7 +283,6 @@ impl<A: NetworkAddress> Socket<A, Open> {
         Ok(Socket {
             timestamp_mode: self.timestamp_mode,
             socket: self.socket,
-            errqueue_waiter: self.errqueue_waiter,
             send_counter: self.send_counter,
             _addr: PhantomData,
             _state: PhantomData,
@@ -380,14 +388,9 @@ pub fn open_ip(
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, timestamping.into())?;
 
-    #[cfg(target_os = "linux")]
-    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
-
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
-        #[cfg(target_os = "linux")]
-        errqueue_waiter,
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
@@ -407,14 +410,9 @@ pub fn connect_address(
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, timestamping.into())?;
 
-    #[cfg(target_os = "linux")]
-    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
-
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
-        #[cfg(target_os = "linux")]
-        errqueue_waiter,
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
@@ -446,14 +444,9 @@ pub fn open_interface_udp4(
     }
     socket.set_nonblocking(true)?;
 
-    #[cfg(target_os = "linux")]
-    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
-
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
-        #[cfg(target_os = "linux")]
-        errqueue_waiter,
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
@@ -486,14 +479,9 @@ pub fn open_interface_udp6(
     }
     socket.set_nonblocking(true)?;
 
-    #[cfg(target_os = "linux")]
-    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
-
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
-        #[cfg(target_os = "linux")]
-        errqueue_waiter,
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
@@ -533,14 +521,9 @@ pub fn open_interface_ethernet(
     }
     socket.set_nonblocking(true)?;
 
-    #[cfg(target_os = "linux")]
-    let errqueue_waiter = crate::raw_socket::err_queue_waiter::ErrQueueWaiter::new(&socket)?;
-
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
-        #[cfg(target_os = "linux")]
-        errqueue_waiter,
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
