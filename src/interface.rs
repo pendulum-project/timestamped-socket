@@ -12,14 +12,16 @@ pub struct InterfaceIterator {
 
 impl InterfaceIterator {
     pub fn new() -> std::io::Result<Self> {
-        let mut addrs = core::mem::MaybeUninit::<*mut libc::ifaddrs>::uninit();
+        let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
 
         unsafe {
-            cerr(libc::getifaddrs(addrs.as_mut_ptr()))?;
+            cerr(libc::getifaddrs(&mut addrs))?;
+
+            assert!(!addrs.is_null());
 
             Ok(Self {
-                base: addrs.assume_init(),
-                next: addrs.assume_init(),
+                base: addrs,
+                next: addrs,
             })
         }
     }
