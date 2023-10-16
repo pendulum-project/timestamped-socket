@@ -9,7 +9,7 @@ use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
     control_message::{control_message_space, ControlMessage, MessageQueue},
-    interface::{InterfaceDescriptor, InterfaceName},
+    interface::InterfaceName,
     networkaddress::{
         sealed::PrivateToken, EthernetAddress, MacAddress, MulticastJoinable, NetworkAddress,
     },
@@ -514,13 +514,9 @@ pub fn open_interface_ethernet(
         EthernetAddress::new(
             u16::from_ne_bytes(protocol.to_le_bytes()),
             MacAddress::new([0; 6]),
-            InterfaceDescriptor {
-                interface_name: Some(interface),
-                // Just need a mode, which doesnt matter for index
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         )
         .to_sockaddr(PrivateToken),
     )?;

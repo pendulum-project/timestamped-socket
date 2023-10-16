@@ -161,14 +161,14 @@ impl InterfaceName {
         }
     }
 
-    pub fn get_index(self) -> Option<libc::c_uint> {
-        // Temporary implementation until great refactor
-        InterfaceDescriptor {
-            interface_name: Some(self),
-            // doesn't matter
-            mode: LinuxNetworkMode::Ipv4,
+    pub fn get_index(&self) -> Option<libc::c_uint> {
+        // # SAFETY
+        //
+        // The pointer is valid and null-terminated
+        match unsafe { libc::if_nametoindex(self.as_cstr().as_ptr()) } {
+            0 => None,
+            n => Some(n),
         }
-        .get_index()
     }
 }
 
@@ -220,12 +220,6 @@ impl<'de> serde::Deserialize<'de> for InterfaceName {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct InterfaceDescriptor {
-    pub interface_name: Option<InterfaceName>,
-    pub mode: LinuxNetworkMode,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxNetworkMode {
     Ipv4,
@@ -249,6 +243,12 @@ fn cannot_iterate_interfaces() -> std::io::Error {
 fn interface_does_not_exist() -> std::io::Error {
     let msg = "The specified interface does not exist";
     std::io::Error::new(std::io::ErrorKind::Other, msg)
+}
+
+#[derive(Debug, Clone)]
+struct InterfaceDescriptor {
+    pub interface_name: Option<InterfaceName>,
+    pub mode: LinuxNetworkMode,
 }
 
 impl InterfaceDescriptor {

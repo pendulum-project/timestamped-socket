@@ -3,11 +3,7 @@ use std::{
     os::fd::RawFd,
 };
 
-use crate::{
-    cerr,
-    control_message::zeroed_sockaddr_storage,
-    interface::{InterfaceDescriptor, InterfaceName},
-};
+use crate::{cerr, control_message::zeroed_sockaddr_storage, interface::InterfaceName};
 
 use self::sealed::{PrivateToken, SealedMC, SealedNA};
 
@@ -114,12 +110,9 @@ impl MulticastJoinable for SocketAddrV4 {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
         // Safety:
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IP/IP_ADD_MEMBERSHIP
@@ -148,12 +141,9 @@ impl MulticastJoinable for SocketAddrV4 {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
         // Safety:
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IP/IP_DROP_MEMBERSHIP
@@ -239,12 +229,9 @@ impl MulticastJoinable for SocketAddrV6 {
             ipv6mr_multiaddr: libc::in6_addr {
                 s6_addr: self.ip().octets(),
             },
-            ipv6mr_interface: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            ipv6mr_interface: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
         // Safety:
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IPV6/IPV6_ADD_MEMBERSHIP
@@ -270,12 +257,9 @@ impl MulticastJoinable for SocketAddrV6 {
             ipv6mr_multiaddr: libc::in6_addr {
                 s6_addr: self.ip().octets(),
             },
-            ipv6mr_interface: InterfaceDescriptor {
-                interface_name: Some(interface),
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            ipv6mr_interface: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
         // Safety:
         // value points to a struct of length option_len, of type ip_mreq as expected for IPPROTO_IPV6/IPV6_DROP_MEMBERSHIP
@@ -436,13 +420,9 @@ impl MulticastJoinable for EthernetAddress {
         _token: PrivateToken,
     ) -> std::io::Result<()> {
         let request = libc::packet_mreq {
-            mr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                // Just need a mode, which doesnt matter for index
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            mr_ifindex: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
             mr_type: libc::PACKET_MR_MULTICAST as _,
             mr_alen: 6,
             mr_address: [
@@ -477,13 +457,9 @@ impl MulticastJoinable for EthernetAddress {
         _token: PrivateToken,
     ) -> std::io::Result<()> {
         let request = libc::packet_mreq {
-            mr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface),
-                // Just need a mode, which doesnt matter for index
-                mode: crate::interface::LinuxNetworkMode::Ipv6,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            mr_ifindex: interface
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
             mr_type: libc::PACKET_MR_MULTICAST as _,
             mr_alen: 6,
             mr_address: [
