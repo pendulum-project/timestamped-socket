@@ -303,7 +303,7 @@ pub fn sockaddr_storage_to_socket_addr(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::Ipv4Addr;
 
     use super::*;
 
