@@ -11,7 +11,7 @@ use crate::{
     control_message::{
         empty_msghdr, zeroed_sockaddr_storage, ControlMessage, ControlMessageIterator, MessageQueue,
     },
-    interface::{InterfaceDescriptor, InterfaceName},
+    interface::InterfaceName,
 };
 
 // A struct providing safe wrappers around various socket api calls
@@ -74,12 +74,9 @@ impl RawSocket {
             imr_address: libc::in_addr {
                 s_addr: u32::from_ne_bytes(Ipv4Addr::UNSPECIFIED.octets()),
             },
-            imr_ifindex: InterfaceDescriptor {
-                interface_name: Some(interface_name),
-                mode: crate::interface::LinuxNetworkMode::Ipv4,
-            }
-            .get_index()
-            .ok_or(std::io::ErrorKind::InvalidInput)? as _,
+            imr_ifindex: interface_name
+                .get_index()
+                .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
 
         cerr(unsafe {
@@ -95,12 +92,10 @@ impl RawSocket {
     }
 
     pub(crate) fn ipv6_multicast_if(&self, interface_name: InterfaceName) -> std::io::Result<()> {
-        let index = InterfaceDescriptor {
-            interface_name: Some(interface_name),
-            mode: crate::interface::LinuxNetworkMode::Ipv6,
-        }
-        .get_index()
-        .ok_or(std::io::ErrorKind::InvalidInput)?;
+        let index = interface_name
+            .get_index()
+            .ok_or(std::io::ErrorKind::InvalidInput)?;
+
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
