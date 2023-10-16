@@ -1,11 +1,32 @@
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     str::FromStr,
 };
 
 use super::cerr;
 
-pub struct InterfaceIterator {
+pub fn interfaces() -> std::io::Result<HashMap<InterfaceName, InterfaceData>> {
+    let mut elements = HashMap::default();
+
+    for data in InterfaceIterator::new()? {
+        let current: &mut InterfaceData = elements.entry(data.name).or_default();
+
+        current.socket_addrs.extend(data.socket_addr);
+        assert!(!(current.mac.is_some() && data.mac.is_some()));
+        current.mac = current.mac.or(data.mac);
+    }
+
+    Ok(elements)
+}
+
+#[derive(Default, Debug)]
+pub struct InterfaceData {
+    socket_addrs: Vec<SocketAddr>,
+    mac: Option<[u8; 6]>,
+}
+
+struct InterfaceIterator {
     base: *mut libc::ifaddrs,
     next: *mut libc::ifaddrs,
 }
@@ -33,13 +54,13 @@ impl Drop for InterfaceIterator {
     }
 }
 
-pub struct InterfaceData {
-    pub name: InterfaceName,
-    pub mac: Option<[u8; 6]>,
-    pub socket_addr: Option<SocketAddr>,
+struct InterfaceDataInternal {
+    name: InterfaceName,
+    mac: Option<[u8; 6]>,
+    socket_addr: Option<SocketAddr>,
 }
 
-impl InterfaceData {
+impl InterfaceDataInternal {
     pub fn has_ip_addr(&self, address: IpAddr) -> bool {
         match self.socket_addr {
             None => false,
@@ -49,7 +70,7 @@ impl InterfaceData {
 }
 
 impl Iterator for InterfaceIterator {
-    type Item = InterfaceData;
+    type Item = InterfaceDataInternal;
 
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
         let ifaddr = unsafe { self.next.as_ref() }?;
@@ -82,7 +103,7 @@ impl Iterator for InterfaceIterator {
 
         let socket_addr = unsafe { sockaddr_to_socket_addr(ifaddr.ifa_addr) };
 
-        let data = InterfaceData {
+        let data = InterfaceDataInternal {
             name,
             mac,
             socket_addr,
@@ -92,7 +113,7 @@ impl Iterator for InterfaceIterator {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterfaceName {
     bytes: [u8; libc::IFNAMSIZ],
 }
@@ -129,7 +150,7 @@ impl InterfaceName {
     }
 
     pub fn from_socket_addr(local_addr: SocketAddr) -> std::io::Result<Option<Self>> {
-        let matches_inferface = |interface: &InterfaceData| match interface.socket_addr {
+        let matches_inferface = |interface: &InterfaceDataInternal| match interface.socket_addr {
             None => false,
             Some(address) => address.ip() == local_addr.ip(),
         };
