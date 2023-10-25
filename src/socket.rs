@@ -168,22 +168,13 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         &self,
         expected_counter: u32,
     ) -> std::io::Result<Option<Timestamp>> {
+        let try_read = |_: &RawSocket| self.fetch_send_timestamp_try_read(expected_counter);
+
         loop {
             // the timestamp being available triggers the error interest
-            let mut guard = self.socket.ready(Interest::ERROR).await?;
-
-            match self.fetch_send_timestamp_try_read(expected_counter) {
-                Ok(Some(timestamp)) => break Ok(Some(timestamp)),
-                Ok(None) => continue,
-                Err(error) => {
-                    if error.kind() == std::io::ErrorKind::WouldBlock {
-                        guard.clear_ready();
-                        continue;
-                    } else {
-                        tracing::warn!(error = ?&error, "Error fetching timestamp");
-                        break Err(error);
-                    }
-                }
+            match self.socket.async_io(Interest::ERROR, try_read).await? {
+                Some(timestamp) => break Ok(Some(timestamp)),
+                None => continue,
             }
         }
     }
