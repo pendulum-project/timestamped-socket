@@ -1,7 +1,12 @@
 [package]
 name = "timestamped-socket"
+description = "Implementation of async UDP and raw ethernet sockets with timestamping"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/pendulum-project/timestamped-socket"
+homepage = "https://github.com/pendulum-project/timestamped-socket"
+publish = true
 rust-version = "1.66"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
