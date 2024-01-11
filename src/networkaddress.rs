@@ -1,9 +1,12 @@
-use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    os::fd::RawFd,
-};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use crate::{cerr, control_message::zeroed_sockaddr_storage, interface::InterfaceName};
+#[cfg(target_os = "linux")]
+use std::os::fd::RawFd;
+
+use crate::control_message::zeroed_sockaddr_storage;
+
+#[cfg(target_os = "linux")]
+use crate::{cerr, interface::InterfaceName};
 
 use self::sealed::{PrivateToken, SealedMC, SealedNA};
 
@@ -25,6 +28,7 @@ pub trait NetworkAddress: Sized + SealedNA {
     fn from_sockaddr(addr: libc::sockaddr_storage, _token: PrivateToken) -> Option<Self>;
 }
 
+#[cfg(target_os = "linux")]
 pub trait MulticastJoinable: NetworkAddress + SealedMC {
     #[doc(hidden)]
     fn join_multicast(
@@ -96,6 +100,7 @@ impl NetworkAddress for SocketAddrV4 {
 
 impl SealedMC for SocketAddrV4 {}
 
+#[cfg(target_os = "linux")]
 impl MulticastJoinable for SocketAddrV4 {
     fn join_multicast(
         &self,
@@ -218,6 +223,7 @@ impl NetworkAddress for SocketAddrV6 {
 
 impl SealedMC for SocketAddrV6 {}
 
+#[cfg(target_os = "linux")]
 impl MulticastJoinable for SocketAddrV6 {
     fn join_multicast(
         &self,
@@ -301,27 +307,32 @@ impl NetworkAddress for SocketAddr {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MacAddress([u8; 6]);
 
+#[cfg(target_os = "linux")]
 impl From<[u8; 6]> for MacAddress {
     fn from(value: [u8; 6]) -> Self {
         MacAddress(value)
     }
 }
 
+#[cfg(target_os = "linux")]
 impl AsRef<[u8]> for MacAddress {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
+#[cfg(target_os = "linux")]
 impl MacAddress {
     pub const fn new(address: [u8; 6]) -> Self {
         MacAddress(address)
     }
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct EthernetAddress {
     protocol: u16,
@@ -329,6 +340,7 @@ pub struct EthernetAddress {
     if_index: libc::c_int,
 }
 
+#[cfg(target_os = "linux")]
 impl EthernetAddress {
     pub const fn new(protocol: u16, mac_address: MacAddress, if_index: libc::c_int) -> Self {
         EthernetAddress {
@@ -351,8 +363,10 @@ impl EthernetAddress {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl SealedNA for EthernetAddress {}
 
+#[cfg(target_os = "linux")]
 impl NetworkAddress for EthernetAddress {
     fn to_sockaddr(&self, _token: PrivateToken) -> libc::sockaddr_storage {
         const _: () = assert!(
@@ -410,8 +424,10 @@ impl NetworkAddress for EthernetAddress {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl SealedMC for EthernetAddress {}
 
+#[cfg(target_os = "linux")]
 impl MulticastJoinable for EthernetAddress {
     fn join_multicast(
         &self,

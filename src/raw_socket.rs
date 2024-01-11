@@ -1,8 +1,10 @@
 use std::{
     io::IoSliceMut,
-    net::Ipv4Addr,
     os::fd::{AsRawFd, RawFd},
 };
+
+#[cfg(target_os = "linux")]
+use std::net::Ipv4Addr;
 
 use libc::{c_void, sockaddr, sockaddr_storage};
 
@@ -11,8 +13,10 @@ use crate::{
     control_message::{
         empty_msghdr, zeroed_sockaddr_storage, ControlMessage, ControlMessageIterator, MessageQueue,
     },
-    interface::InterfaceName,
 };
+
+#[cfg(target_os = "linux")]
+use crate::interface::InterfaceName;
 
 // A struct providing safe wrappers around various socket api calls
 #[derive(Debug, Hash)]
@@ -39,16 +43,22 @@ impl RawSocket {
     }
 
     pub(crate) fn bind(&self, addr: sockaddr_storage) -> std::io::Result<()> {
-        cerr(unsafe {
-            libc::bind(
-                self.fd,
-                &addr as *const _ as *const _,
-                std::mem::size_of_val(&addr) as _,
-            )
-        })?;
+        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+
+        // Per posix, it may be invalid to specify a length larger than that of the family.
+        let len = len.min(match addr.ss_family as _ {
+            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
+            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
+            _ => len,
+        });
+
+        // Safety: socket is valid for the duration of the call, addr lives for the duration of
+        // the call and len is at most the length of addr.
+        cerr(unsafe { libc::bind(self.fd, &addr as *const _ as *const _, len) })?;
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn bind_to_device(&self, interface_name: InterfaceName) -> std::io::Result<()> {
         let value = interface_name.as_str().as_bytes();
         let len = value.len();
@@ -66,6 +76,7 @@ impl RawSocket {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn ip_multicast_if(&self, interface_name: InterfaceName) -> std::io::Result<()> {
         let request = libc::ip_mreqn {
             imr_multiaddr: libc::in_addr {
@@ -91,6 +102,7 @@ impl RawSocket {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn ipv6_multicast_if(&self, interface_name: InterfaceName) -> std::io::Result<()> {
         let index = interface_name
             .get_index()
@@ -108,6 +120,7 @@ impl RawSocket {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn ip_multicast_loop(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
         cerr(unsafe {
@@ -122,6 +135,7 @@ impl RawSocket {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn ipv6_multicast_loop(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
         cerr(unsafe {
@@ -136,6 +150,7 @@ impl RawSocket {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn ipv6_v6only(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
         cerr(unsafe {
@@ -151,13 +166,18 @@ impl RawSocket {
     }
 
     pub(crate) fn connect(&self, addr: sockaddr_storage) -> std::io::Result<()> {
-        cerr(unsafe {
-            libc::connect(
-                self.fd,
-                &addr as *const _ as *const _,
-                std::mem::size_of_val(&addr) as _,
-            )
-        })?;
+        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+
+        // Per posix, it may be invalid to specify a length larger than that of the family.
+        let len = len.min(match addr.ss_family as _ {
+            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
+            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
+            _ => len,
+        });
+
+        // Safety: socket is valid for the duration of the call, addr lives for the duration of
+        // the call and len is at most the length of addr.
+        cerr(unsafe { libc::connect(self.fd, &addr as *const _ as *const _, len) })?;
         Ok(())
     }
 
@@ -166,6 +186,7 @@ impl RawSocket {
         cerr(unsafe { libc::ioctl(self.fd, libc::FIONBIO, &nonblocking) }).map(drop)
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn reuse_addr(&self) -> std::io::Result<()> {
         let options = 1u32;
 
@@ -210,6 +231,7 @@ impl RawSocket {
 
         let receive_flags = match queue {
             MessageQueue::Normal => 0,
+            #[cfg(target_os = "linux")]
             MessageQueue::Error => libc::MSG_ERRQUEUE,
         };
 
@@ -261,10 +283,19 @@ impl RawSocket {
     }
 
     pub(crate) fn send_to(&self, msg: &[u8], addr: sockaddr_storage) -> std::io::Result<()> {
+        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+
+        // Per posix, it may be invalid to specify a length larger than that of the family.
+        let len = len.min(match addr.ss_family as _ {
+            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
+            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
+            _ => len,
+        });
+
         // Safety:
         // the socket will outlive the call.
         // msg points to a block of memory of length msg.len()
-        // addr points to a block of memory of length addrlen
+        // addr points to a block of memory of length at least len
         // with flags=0, the other arguments don't matter for safety
         cerr(unsafe {
             libc::sendto(
@@ -273,7 +304,7 @@ impl RawSocket {
                 msg.len(),
                 0,
                 &addr as *const _ as *const sockaddr,
-                std::mem::size_of_val(&addr) as _,
+                len,
             ) as _
         })?;
         Ok(())
@@ -285,6 +316,40 @@ impl RawSocket {
         // with flags=0, the other arguments don't matter for safety
         cerr(unsafe { libc::send(self.fd, msg as *const _ as *const c_void, msg.len(), 0) as _ })?;
         Ok(())
+    }
+
+    pub(crate) fn getsockname(&self) -> std::io::Result<sockaddr_storage> {
+        let mut addr = zeroed_sockaddr_storage();
+        let mut addr_len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+        // Safety:
+        // the socket will outlive the call.
+        // addr points to a block of memory of length addr_len
+        // addr_len will outlive the call.
+        cerr(unsafe {
+            libc::getsockname(
+                self.fd,
+                &mut addr as *mut _ as *mut _,
+                &mut addr_len as *mut _,
+            )
+        })?;
+        Ok(addr)
+    }
+
+    pub(crate) fn getpeername(&self) -> std::io::Result<sockaddr_storage> {
+        let mut addr = zeroed_sockaddr_storage();
+        let mut addr_len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+        // Safety:
+        // the socket will outlive the call.
+        // addr points to a block of memory of length addr_len
+        // addr_len will outlive the call.
+        cerr(unsafe {
+            libc::getpeername(
+                self.fd,
+                &mut addr as *mut _ as *mut _,
+                &mut addr_len as *mut _,
+            )
+        })?;
+        Ok(addr)
     }
 
     #[cfg(target_os = "freebsd")]
@@ -314,6 +379,17 @@ impl RawSocket {
                 std::mem::size_of_val(&options) as libc::socklen_t,
             ))
         }?;
+        if options != 0 {
+            unsafe {
+                cerr(libc::setsockopt(
+                    self.fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_TS_CLOCK,
+                    &(libc::SO_TS_REALTIME as u32) as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&(libc::SO_TS_REALTIME as u32)) as libc::socklen_t,
+                ))
+            }?;
+        }
         Ok(())
     }
 

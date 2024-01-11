@@ -86,28 +86,27 @@ jobs:
         env:
           RUST_BACKTRACE: 1
 
-  # no support for RawFd on freebsd; lots of our code relies on that
-  #
-  #   build-freebsd:
-  #     name: Clippy & Test FreeBSD
-  #     runs-on: macos-12
-  #     steps:
-  #       - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
-  #       - name: test on freebsd
-  #         uses: vmactions/freebsd-vm@v0
-  #         with:
-  #           usesh: true
-  #           mem: 4096
-  #           copyback: false
-  #           prepare: |
-  #             pkg install -y curl
-  #             curl https://sh.rustup.rs -sSf --output rustup.sh
-  #             sh rustup.sh -y --profile default --default-toolchain 1.65.0 # cannot use `--profile minimal` because of clippy
-  #             echo "~~~~ rustc --version ~~~~"
-  #             $HOME/.cargo/bin/rustc --version
-  #             echo "~~~~ freebsd-version ~~~~"
-  #             freebsd-version
-  #           run: $HOME/.cargo/bin/cargo clippy -- -D warnings && $HOME/.cargo/bin/cargo build && $HOME/.cargo/bin/cargo test
+  build-freebsd:
+    name: Clippy & Test FreeBSD
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
+      - name: test on freebsd
+        uses: vmactions/freebsd-vm@d139f0eaa5d47d9fcc44f7ab1748574475d89565
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile default --default-toolchain 1.66.0 # cannot use `--profile minimal` because of clippy
+            echo "~~~~ rustc --version ~~~~"
+            $HOME/.cargo/bin/rustc --version
+            echo "~~~~ freebsd-version ~~~~"
+            freebsd-version
+          run: $HOME/.cargo/bin/cargo clippy -- -D warnings && $HOME/.cargo/bin/cargo build && $HOME/.cargo/bin/cargo test
 
   clippy-raspberry-pi:
     name: ClippyRaspberryPi

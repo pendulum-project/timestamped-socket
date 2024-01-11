@@ -1,6 +1,8 @@
+use std::{marker::PhantomData, net::SocketAddr};
+
+#[cfg(target_os = "linux")]
 use std::{
-    marker::PhantomData,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
     os::fd::AsRawFd,
     time::Duration,
 };
@@ -9,11 +11,14 @@ use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
     control_message::{control_message_space, ControlMessage, MessageQueue},
-    interface::InterfaceName,
-    networkaddress::{
-        sealed::PrivateToken, EthernetAddress, MacAddress, MulticastJoinable, NetworkAddress,
-    },
+    networkaddress::{sealed::PrivateToken, NetworkAddress},
     raw_socket::RawSocket,
+};
+
+#[cfg(target_os = "linux")]
+use crate::{
+    interface::InterfaceName,
+    networkaddress::{EthernetAddress, MacAddress, MulticastJoinable},
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Default)]
@@ -48,6 +53,8 @@ pub enum GeneralTimestampMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum InterfaceTimestampMode {
+    HardwareAll,
+    HardwareRecv,
     HardwarePTPAll,
     HardwarePTPRecv,
     SoftwareAll,
@@ -75,7 +82,7 @@ fn select_timestamp(
 
     match mode {
         SoftwareAll | SoftwareRecv => software,
-        HardwarePTPAll | HardwarePTPRecv => hardware,
+        HardwareAll | HardwareRecv | HardwarePTPAll | HardwarePTPRecv => hardware,
         None => Option::None,
     }
 }
@@ -91,6 +98,7 @@ pub struct RecvResult<A> {
 pub struct Socket<A, S> {
     timestamp_mode: InterfaceTimestampMode,
     socket: AsyncFd<RawSocket>,
+    #[cfg(target_os = "linux")]
     send_counter: u32,
     _addr: PhantomData<A>,
     _state: PhantomData<S>,
@@ -100,6 +108,16 @@ pub struct Open;
 pub struct Connected;
 
 impl<A: NetworkAddress, S> Socket<A, S> {
+    pub fn local_addr(&self) -> std::io::Result<A> {
+        let addr = self.socket.get_ref().getsockname()?;
+        A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<A> {
+        let addr = self.socket.get_ref().getpeername()?;
+        A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
+    }
+
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
         self.socket
             .async_io(Interest::READABLE, |socket| {
@@ -120,6 +138,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                             timestamp = select_timestamp(self.timestamp_mode, software, hardware);
                         }
 
+                        #[cfg(target_os = "linux")]
                         ControlMessage::ReceiveError(error) => {
                             tracing::warn!(
                                 "unexpected error control message on receive: {}",
@@ -251,11 +270,10 @@ impl<A: NetworkAddress> Socket<A, Open> {
             self.timestamp_mode,
             InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
         ) {
-            let expected_counter = self.send_counter;
-            self.send_counter = self.send_counter.wrapping_add(1);
-
             #[cfg(target_os = "linux")]
             {
+                let expected_counter = self.send_counter;
+                self.send_counter = self.send_counter.wrapping_add(1);
                 self.fetch_send_timestamp(expected_counter).await
             }
 
@@ -268,12 +286,13 @@ impl<A: NetworkAddress> Socket<A, Open> {
         }
     }
 
-    pub async fn connect(self, addr: A) -> std::io::Result<Socket<A, Connected>> {
+    pub fn connect(self, addr: A) -> std::io::Result<Socket<A, Connected>> {
         let addr = addr.to_sockaddr(PrivateToken);
         self.socket.get_ref().connect(addr)?;
         Ok(Socket {
             timestamp_mode: self.timestamp_mode,
             socket: self.socket,
+            #[cfg(target_os = "linux")]
             send_counter: self.send_counter,
             _addr: PhantomData,
             _state: PhantomData,
@@ -291,11 +310,10 @@ impl<A: NetworkAddress> Socket<A, Connected> {
             self.timestamp_mode,
             InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
         ) {
-            let expected_counter = self.send_counter;
-            self.send_counter = self.send_counter.wrapping_add(1);
-
             #[cfg(target_os = "linux")]
             {
+                let expected_counter = self.send_counter;
+                self.send_counter = self.send_counter.wrapping_add(1);
                 self.fetch_send_timestamp(expected_counter).await
             }
 
@@ -309,6 +327,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl<A: MulticastJoinable, S> Socket<A, S> {
     pub fn join_multicast(&self, addr: A, interface: InterfaceName) -> std::io::Result<()> {
         addr.join_multicast(self.socket.get_ref().as_raw_fd(), interface, PrivateToken)
@@ -322,7 +341,7 @@ impl<A: MulticastJoinable, S> Socket<A, S> {
 #[cfg(target_os = "linux")]
 fn configure_timestamping(socket: &RawSocket, mode: InterfaceTimestampMode) -> std::io::Result<()> {
     let options = match mode {
-        InterfaceTimestampMode::HardwarePTPAll => {
+        InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwarePTPAll => {
             libc::SOF_TIMESTAMPING_RAW_HARDWARE
                 | libc::SOF_TIMESTAMPING_TX_SOFTWARE
                 | libc::SOF_TIMESTAMPING_RX_HARDWARE
@@ -330,7 +349,7 @@ fn configure_timestamping(socket: &RawSocket, mode: InterfaceTimestampMode) -> s
                 | libc::SOF_TIMESTAMPING_OPT_TSONLY
                 | libc::SOF_TIMESTAMPING_OPT_ID
         }
-        InterfaceTimestampMode::HardwarePTPRecv => {
+        InterfaceTimestampMode::HardwareRecv | InterfaceTimestampMode::HardwarePTPRecv => {
             libc::SOF_TIMESTAMPING_RAW_HARDWARE | libc::SOF_TIMESTAMPING_RX_HARDWARE
         }
         InterfaceTimestampMode::SoftwareAll => {
@@ -382,6 +401,7 @@ pub fn open_ip(
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
+        #[cfg(target_os = "linux")]
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
@@ -404,12 +424,53 @@ pub fn connect_address(
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
+        #[cfg(target_os = "linux")]
         send_counter: 0,
         _addr: PhantomData,
         _state: PhantomData,
     })
 }
 
+#[cfg(target_os = "linux")]
+pub fn open_interface_udp(
+    interface: InterfaceName,
+    port: u16,
+    timestamping: InterfaceTimestampMode,
+) -> std::io::Result<Socket<SocketAddr, Open>> {
+    // Setup the socket
+    let socket = RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
+    socket.reuse_addr()?;
+    socket.ipv6_v6only(false)?;
+    socket.bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).to_sockaddr(PrivateToken))?;
+    socket.bind_to_device(interface)?;
+    socket.ipv6_multicast_if(interface)?;
+    socket.ipv6_multicast_loop(false)?;
+    configure_timestamping(&socket, timestamping)?;
+    match timestamping {
+        InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
+            socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
+        }
+        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv => socket
+            .driver_enable_hardware_timestamping(
+                interface,
+                libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+            )?,
+        InterfaceTimestampMode::None
+        | InterfaceTimestampMode::SoftwareAll
+        | InterfaceTimestampMode::SoftwareRecv => {}
+    }
+    socket.set_nonblocking(true)?;
+
+    Ok(Socket {
+        timestamp_mode: timestamping,
+        socket: AsyncFd::new(socket)?,
+        send_counter: 0,
+        _addr: PhantomData,
+        _state: PhantomData,
+    })
+}
+
+#[cfg(target_os = "linux")]
 pub fn open_interface_udp4(
     interface: InterfaceName,
     port: u16,
@@ -423,15 +484,18 @@ pub fn open_interface_udp4(
     socket.ip_multicast_if(interface)?;
     socket.ip_multicast_loop(false)?;
     configure_timestamping(&socket, timestamping)?;
-    #[cfg(target_os = "linux")]
-    if matches!(
-        timestamping,
-        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
-    ) {
-        socket.driver_enable_hardware_timestamping(
-            interface,
-            libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
-        )?;
+    match timestamping {
+        InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
+            socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
+        }
+        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv => socket
+            .driver_enable_hardware_timestamping(
+                interface,
+                libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+            )?,
+        InterfaceTimestampMode::None
+        | InterfaceTimestampMode::SoftwareAll
+        | InterfaceTimestampMode::SoftwareRecv => {}
     }
     socket.set_nonblocking(true)?;
 
@@ -444,6 +508,7 @@ pub fn open_interface_udp4(
     })
 }
 
+#[cfg(target_os = "linux")]
 pub fn open_interface_udp6(
     interface: InterfaceName,
     port: u16,
@@ -458,15 +523,18 @@ pub fn open_interface_udp6(
     socket.ipv6_multicast_if(interface)?;
     socket.ipv6_multicast_loop(false)?;
     configure_timestamping(&socket, timestamping)?;
-    #[cfg(target_os = "linux")]
-    if matches!(
-        timestamping,
-        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
-    ) {
-        socket.driver_enable_hardware_timestamping(
-            interface,
-            libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
-        )?;
+    match timestamping {
+        InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
+            socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
+        }
+        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv => socket
+            .driver_enable_hardware_timestamping(
+                interface,
+                libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+            )?,
+        InterfaceTimestampMode::None
+        | InterfaceTimestampMode::SoftwareAll
+        | InterfaceTimestampMode::SoftwareRecv => {}
     }
     socket.set_nonblocking(true)?;
 
@@ -479,6 +547,7 @@ pub fn open_interface_udp6(
     })
 }
 
+#[cfg(target_os = "linux")]
 pub fn open_interface_ethernet(
     interface: InterfaceName,
     protocol: u16,
@@ -500,15 +569,18 @@ pub fn open_interface_ethernet(
         .to_sockaddr(PrivateToken),
     )?;
     configure_timestamping(&socket, timestamping)?;
-    #[cfg(target_os = "linux")]
-    if matches!(
-        timestamping,
-        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv
-    ) {
-        socket.driver_enable_hardware_timestamping(
-            interface,
-            libc::HWTSTAMP_FILTER_PTP_V2_L2_EVENT as _,
-        )?;
+    match timestamping {
+        InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
+            socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
+        }
+        InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv => socket
+            .driver_enable_hardware_timestamping(
+                interface,
+                libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+            )?,
+        InterfaceTimestampMode::None
+        | InterfaceTimestampMode::SoftwareAll
+        | InterfaceTimestampMode::SoftwareRecv => {}
     }
     socket.set_nonblocking(true)?;
 
@@ -524,10 +596,12 @@ pub fn open_interface_ethernet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{net::IpAddr, str::FromStr};
+    use std::net::{IpAddr, Ipv4Addr};
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn test_open_udp6() {
+        use std::str::FromStr;
         let mut a = open_interface_udp6(
             InterfaceName::from_str("lo").unwrap(),
             5123,
@@ -550,8 +624,10 @@ mod tests {
         assert_eq!(&buf[0..3], &[4, 5, 6]);
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn test_open_udp4() {
+        use std::str::FromStr;
         let mut a = open_interface_udp4(
             InterfaceName::from_str("lo").unwrap(),
             5124,

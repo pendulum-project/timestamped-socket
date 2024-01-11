@@ -88,6 +88,10 @@ impl Iterator for InterfaceIterator {
 
         let family = unsafe { (*ifaddr.ifa_addr).sa_family };
 
+        #[allow(unused)]
+        let mac: Option<[u8; 6]> = None;
+
+        #[cfg(target_os = "linux")]
         let mac = if family as i32 == libc::AF_PACKET {
             let sockaddr_ll: libc::sockaddr_ll =
                 unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
@@ -100,6 +104,30 @@ impl Iterator for InterfaceIterator {
                 sockaddr_ll.sll_addr[4],
                 sockaddr_ll.sll_addr[5],
             ])
+        } else {
+            None
+        };
+
+        #[cfg(target_os = "freebsd")]
+        let mac = if family as i32 == libc::AF_LINK {
+            let sockaddr_dl: libc::sockaddr_dl =
+                unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
+
+            // From sys/net/if_types.h in freebsd:
+            const IFT_ETHER: u8 = 0x6;
+
+            if sockaddr_dl.sdl_type == IFT_ETHER && sockaddr_dl.sdl_nlen.saturating_add(6) <= 48 {
+                Some([
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize] as u8,
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 1] as u8,
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 2] as u8,
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 3] as u8,
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 4] as u8,
+                    sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 5] as u8,
+                ])
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -122,9 +150,14 @@ pub struct InterfaceName {
 }
 
 impl InterfaceName {
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub const LOOPBACK: Self = Self {
         bytes: *b"lo\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+    };
+
+    #[cfg(all(test, target_os = "freebsd"))]
+    pub const LOOPBACK: Self = Self {
+        bytes: *b"lo0\0\0\0\0\0\0\0\0\0\0\0\0\0",
     };
 
     #[cfg(test)]
@@ -223,21 +256,6 @@ impl<'de> serde::Deserialize<'de> for InterfaceName {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinuxNetworkMode {
-    Ipv4,
-    Ipv6,
-}
-
-impl LinuxNetworkMode {
-    pub fn unspecified_ip_addr(&self) -> IpAddr {
-        match self {
-            LinuxNetworkMode::Ipv4 => IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
-            LinuxNetworkMode::Ipv6 => IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
-        }
-    }
-}
-
 /// Convert a libc::sockaddr to a rust std::net::SocketAddr
 ///
 /// # Safety
@@ -289,16 +307,6 @@ unsafe fn sockaddr_to_socket_addr(sockaddr: *const libc::sockaddr) -> Option<Soc
         }
         _ => None,
     }
-}
-
-pub fn sockaddr_storage_to_socket_addr(
-    sockaddr_storage: &libc::sockaddr_storage,
-) -> Option<SocketAddr> {
-    // Safety:
-    //
-    // sockaddr_storage always has enough space to store either a sockaddr_in or
-    // sockaddr_in6
-    unsafe { sockaddr_to_socket_addr(sockaddr_storage as *const _ as *const libc::sockaddr) }
 }
 
 #[cfg(test)]

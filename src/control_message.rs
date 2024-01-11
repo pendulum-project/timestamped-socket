@@ -9,6 +9,7 @@ pub(crate) const fn control_message_space<T>() -> usize {
 
 pub(crate) enum MessageQueue {
     Normal,
+    #[cfg(target_os = "linux")]
     Error,
 }
 
@@ -51,6 +52,7 @@ pub(crate) enum ControlMessage {
         software: Option<Timestamp>,
         hardware: Option<Timestamp>,
     },
+    #[cfg(target_os = "linux")]
     ReceiveError(libc::sock_extended_err),
     Other(libc::cmsghdr),
 }
