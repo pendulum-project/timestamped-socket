@@ -17,9 +17,9 @@ mod freebsd;
 mod linux;
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-pub use self::fallback::*;
+use self::fallback::*;
 #[cfg(target_os = "freebsd")]
-pub use self::freebsd::*;
+use self::freebsd::*;
 #[cfg(target_os = "linux")]
 pub use self::linux::*;
 
