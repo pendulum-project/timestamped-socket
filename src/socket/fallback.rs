@@ -3,7 +3,7 @@ use crate::raw_socket::RawSocket;
 use super::InterfaceTimestampMode;
 
 pub(super) fn configure_timestamping(
-    socket: &RawSocket,
+    _socket: &RawSocket,
     mode: InterfaceTimestampMode,
 ) -> std::io::Result<()> {
     match mode {
