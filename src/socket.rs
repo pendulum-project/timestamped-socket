@@ -9,19 +9,23 @@ use crate::{
     raw_socket::RawSocket,
 };
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
 mod fallback;
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
 use self::fallback::*;
 #[cfg(target_os = "freebsd")]
 use self::freebsd::*;
 #[cfg(target_os = "linux")]
 pub use self::linux::*;
+#[cfg(target_os = "macos")]
+use self::macos::*;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Default)]
 pub struct Timestamp {
@@ -30,7 +34,7 @@ pub struct Timestamp {
 }
 
 impl Timestamp {
-    #[cfg_attr(target_os = "macos", unused)] // macos does not do nanoseconds
+    #[cfg_attr(target_os = "macos", allow(unused))] // macos does not do nanoseconds
     pub(crate) fn from_timespec(timespec: libc::timespec) -> Self {
         Self {
             seconds: timespec.tv_sec as _,
