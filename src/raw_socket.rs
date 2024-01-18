@@ -42,14 +42,8 @@ impl RawSocket {
     }
 
     pub(crate) fn bind(&self, addr: sockaddr_storage) -> std::io::Result<()> {
-        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
-
         // Per posix, it may be invalid to specify a length larger than that of the family.
-        let len = len.min(match addr.ss_family as _ {
-            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
-            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
-            _ => len,
-        });
+        let len = sockaddr_len(addr);
 
         // Safety: socket is valid for the duration of the call, addr lives for the duration of
         // the call and len is at most the length of addr.
@@ -58,14 +52,8 @@ impl RawSocket {
     }
 
     pub(crate) fn connect(&self, addr: sockaddr_storage) -> std::io::Result<()> {
-        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
-
         // Per posix, it may be invalid to specify a length larger than that of the family.
-        let len = len.min(match addr.ss_family as _ {
-            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
-            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
-            _ => len,
-        });
+        let len = sockaddr_len(addr);
 
         // Safety: socket is valid for the duration of the call, addr lives for the duration of
         // the call and len is at most the length of addr.
@@ -175,14 +163,8 @@ impl RawSocket {
     }
 
     pub(crate) fn send_to(&self, msg: &[u8], addr: sockaddr_storage) -> std::io::Result<()> {
-        let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
-
         // Per posix, it may be invalid to specify a length larger than that of the family.
-        let len = len.min(match addr.ss_family as _ {
-            libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
-            libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
-            _ => len,
-        });
+        let len = sockaddr_len(addr);
 
         // Safety:
         // the socket will outlive the call.
@@ -243,6 +225,16 @@ impl RawSocket {
         })?;
         Ok(addr)
     }
+}
+
+fn sockaddr_len(addr: sockaddr_storage) -> u32 {
+    let len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
+
+    len.min(match addr.ss_family as _ {
+        libc::AF_INET => std::mem::size_of::<libc::sockaddr_in>() as _,
+        libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
+        _ => len,
+    })
 }
 
 impl Drop for RawSocket {

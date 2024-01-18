@@ -92,6 +92,8 @@ impl Iterator for InterfaceIterator {
         let mac: Option<[u8; 6]> = None;
 
         #[cfg(target_os = "linux")]
+        // Safety: getifaddrs ensures that all addresses are valid, and a valid address of type
+        // AF_PACKET always is reinterpret castable to sockaddr_ll
         let mac = if family as i32 == libc::AF_PACKET {
             let sockaddr_ll: libc::sockaddr_ll =
                 unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
@@ -110,6 +112,8 @@ impl Iterator for InterfaceIterator {
 
         #[cfg(target_os = "freebsd")]
         let mac = if family as i32 == libc::AF_LINK {
+            // Safety: getifaddrs ensures that all addresses are valid, and a valid address of type
+            // AF_LINK always is reinterpret castable to sockaddr_dl
             let sockaddr_dl: libc::sockaddr_dl =
                 unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
 

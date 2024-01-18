@@ -30,13 +30,14 @@ impl RawSocket {
             ))
         }?;
         if options != 0 {
+            let clock = libc::SO_TS_REALTIME as u32;
             unsafe {
                 cerr(libc::setsockopt(
                     self.fd,
                     libc::SOL_SOCKET,
                     libc::SO_TS_CLOCK,
-                    &(libc::SO_TS_REALTIME as u32) as *const _ as *const libc::c_void,
-                    std::mem::size_of_val(&(libc::SO_TS_REALTIME as u32)) as libc::socklen_t,
+                    &clock as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&clock) as libc::socklen_t,
                 ))
             }?;
         }
