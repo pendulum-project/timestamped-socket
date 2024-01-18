@@ -16,6 +16,8 @@ use crate::{
 mod freebsd;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 // A struct providing safe wrappers around various socket api calls
 #[derive(Debug, Hash)]
