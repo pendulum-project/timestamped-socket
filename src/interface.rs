@@ -159,7 +159,7 @@ impl InterfaceName {
         bytes: *b"lo\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
     };
 
-    #[cfg(all(test, target_os = "freebsd"))]
+    #[cfg(all(test, any(target_os = "freebsd", target_os = "macos")))]
     pub const LOOPBACK: Self = Self {
         bytes: *b"lo0\0\0\0\0\0\0\0\0\0\0\0\0\0",
     };
