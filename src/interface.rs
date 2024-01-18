@@ -110,7 +110,7 @@ impl Iterator for InterfaceIterator {
             None
         };
 
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
         let mac = if family as i32 == libc::AF_LINK {
             // Safety: getifaddrs ensures that all addresses are valid, and a valid address of type
             // AF_LINK always is reinterpret castable to sockaddr_dl
@@ -120,7 +120,9 @@ impl Iterator for InterfaceIterator {
             // From sys/net/if_types.h in freebsd:
             const IFT_ETHER: u8 = 0x6;
 
-            if sockaddr_dl.sdl_type == IFT_ETHER && sockaddr_dl.sdl_nlen.saturating_add(6) <= 48 {
+            if sockaddr_dl.sdl_type == IFT_ETHER
+                && sockaddr_dl.sdl_nlen.saturating_add(6) as usize <= sockaddr_dl.sdl_data.len()
+            {
                 Some([
                     sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize] as u8,
                     sockaddr_dl.sdl_data[sockaddr_dl.sdl_nlen as usize + 1] as u8,
