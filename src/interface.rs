@@ -38,15 +38,27 @@ impl InterfaceData {
     }
 }
 
+// Invariants:
+// self.base always contains a pointer received from libc::getifaddrs that is not NULL. The region pointed to is never modified in rust code.
+// self.next always contains either a pointer pointing to a valid ifaddr received from libc::getifaddrs or null.
+//
+// These invariants are setup by InterfaceIterator::new and guaranteed by drop and next, which are the only places these pointers are used.
 struct InterfaceIterator {
     base: *mut libc::ifaddrs,
-    next: *mut libc::ifaddrs,
+    next: *const libc::ifaddrs,
 }
 
 impl InterfaceIterator {
     pub fn new() -> std::io::Result<Self> {
         let mut addrs: *mut libc::ifaddrs = std::ptr::null_mut();
 
+        // Safety:
+        // addrs lives for the duration of the call to getifaddrs.
+        //
+        // Invariant preservation:
+        // we validate that the received address is not null, and
+        // by the guarantees from getifaddrs points to a valid
+        // ifaddr returned from getifaddrs
         unsafe {
             cerr(libc::getifaddrs(&mut addrs))?;
 
@@ -62,6 +74,8 @@ impl InterfaceIterator {
 
 impl Drop for InterfaceIterator {
     fn drop(&mut self) {
+        // Safety:
+        // By the invariants, self.base is guaranteed to point to a memory region allocated by getifaddrs
         unsafe { libc::freeifaddrs(self.base) };
     }
 }
@@ -76,25 +90,35 @@ impl Iterator for InterfaceIterator {
     type Item = InterfaceDataInternal;
 
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        // Safety:
+        // By the invariants, self.next is guaranteed to be a valid pointer to an ifaddrs struct or null.
         let ifaddr = unsafe { self.next.as_ref() }?;
 
+        // Invariant preservation
+        // By the guarantees given by getifaddrs, ifaddr.ifa_next is either null or points to a valid
+        // ifaddr.
         self.next = ifaddr.ifa_next;
 
+        // Safety:
+        // getifaddrs guarantees that ifa_name is not null and points to a valid C string.
         let ifname = unsafe { std::ffi::CStr::from_ptr(ifaddr.ifa_name) };
         let name = match std::str::from_utf8(ifname.to_bytes()) {
             Err(_) => unreachable!("interface names must be ascii"),
             Ok(name) => InterfaceName::from_str(name).expect("name from os"),
         };
 
-        let family = unsafe { (*ifaddr.ifa_addr).sa_family };
+        // Safety:
+        // getifaddrs guarantees that ifa_addr either points to a valid address or is NULL.
+        let family = unsafe { ifaddr.ifa_addr.as_ref() }.map(|a| a.sa_family);
 
         #[allow(unused)]
         let mac: Option<[u8; 6]> = None;
 
         #[cfg(target_os = "linux")]
-        // Safety: getifaddrs ensures that all addresses are valid, and a valid address of type
-        // AF_PACKET always is reinterpret castable to sockaddr_ll
-        let mac = if family as i32 == libc::AF_PACKET {
+        // Safety: getifaddrs ensures that, if an address is present, it is valid. A valid address
+        // of type AF_PACKET is always reinterpret castable to sockaddr_ll, and we know an address
+        // is present since family is not None
+        let mac = if family == Some(libc::AF_PACKET as _) {
             let sockaddr_ll: libc::sockaddr_ll =
                 unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
 
@@ -111,9 +135,10 @@ impl Iterator for InterfaceIterator {
         };
 
         #[cfg(any(target_os = "freebsd", target_os = "macos"))]
-        let mac = if family as i32 == libc::AF_LINK {
-            // Safety: getifaddrs ensures that all addresses are valid, and a valid address of type
-            // AF_LINK always is reinterpret castable to sockaddr_dl
+        let mac = if family == Some(libc::AF_LINK as _) {
+            // Safety: getifaddrs ensures that, if an address is present, it is valid. A valid address
+            // of type AF_LINK is always reinterpret castable to sockaddr_ll, and we know an address
+            // is present since family is not None
             let sockaddr_dl: libc::sockaddr_dl =
                 unsafe { std::ptr::read_unaligned(ifaddr.ifa_addr as *const _) };
 
@@ -138,6 +163,7 @@ impl Iterator for InterfaceIterator {
             None
         };
 
+        // Safety: ifaddr.ifa_addr is always either NULL, or by the guarantees of getifaddrs, points to a valid address.
         let socket_addr = unsafe { sockaddr_to_socket_addr(ifaddr.ifa_addr) };
 
         let data = InterfaceDataInternal {
@@ -206,7 +232,7 @@ impl InterfaceName {
     pub fn get_index(&self) -> Option<libc::c_uint> {
         // # SAFETY
         //
-        // The pointer is valid and null-terminated
+        // self lives for the duration of the call, and is null terminated.
         match unsafe { libc::if_nametoindex(self.as_cstr().as_ptr()) } {
             0 => None,
             n => Some(n),
@@ -266,22 +292,25 @@ impl<'de> serde::Deserialize<'de> for InterfaceName {
 ///
 /// # Safety
 ///
-/// According to the posix standard, `sockaddr` does not have a defined size:
-/// the size depends on the value of the `ss_family` field. We assume this to be
-/// correct.
-///
-/// In practice, types in rust/c need a statically-known stack size, so they
-/// pick some value. In practice it can be (and is) larger than the
-/// `sizeof<libc::sockaddr>` value.
+/// This function assumes that sockaddr is either NULL or points to a valid address.
 unsafe fn sockaddr_to_socket_addr(sockaddr: *const libc::sockaddr) -> Option<SocketAddr> {
     // Most (but not all) of the fields in a socket addr are in network byte
     // ordering. As such, when doing conversions here, we should start from the
     // NATIVE byte representation, as this will actualy be the big-endian
     // representation of the underlying value regardless of platform.
+
+    // Check for null pointers
+    if sockaddr.is_null() {
+        return None;
+    }
+
+    // Safety: by the previous check, sockaddr is not NULL and hence points to a valid address
     match unsafe { (*sockaddr).sa_family as libc::c_int } {
         libc::AF_INET => {
             // SAFETY: we cast from a libc::sockaddr (alignment 2) to a libc::sockaddr_in (alignment 4)
             // that means that the pointer is now potentially unaligned. We must used read_unaligned!
+            // However, the rest of the cast is safe as a valid AF_INET address is always reinterpret castable
+            // as a sockaddr_in
             let inaddr: libc::sockaddr_in =
                 unsafe { std::ptr::read_unaligned(sockaddr as *const libc::sockaddr_in) };
 
@@ -295,9 +324,12 @@ unsafe fn sockaddr_to_socket_addr(sockaddr: *const libc::sockaddr) -> Option<Soc
         libc::AF_INET6 => {
             // SAFETY: we cast from a libc::sockaddr (alignment 2) to a libc::sockaddr_in6 (alignment 4)
             // that means that the pointer is now potentially unaligned. We must used read_unaligned!
+            // However, the cast is safe as a valid AF_INET6 address is always reinterpret catable as a sockaddr_in6
             let inaddr: libc::sockaddr_in6 =
                 unsafe { std::ptr::read_unaligned(sockaddr as *const libc::sockaddr_in6) };
 
+            // Safety:
+            // sin_addr lives for the duration fo the call and matches type
             let sin_addr = inaddr.sin6_addr.s6_addr;
             let segment_bytes: [u8; 16] =
                 unsafe { std::ptr::read_unaligned(&sin_addr as *const _ as *const _) };

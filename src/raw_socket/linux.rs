@@ -52,6 +52,8 @@ impl RawSocket {
             },
         };
 
+        // Safety:
+        // ifreq lives for the duration of the call, ioctl is safe to call otherwise
         cerr(unsafe { libc::ioctl(self.fd, libc::SIOCSHWTSTAMP as _, &mut ifreq) })?;
         Ok(())
     }
@@ -60,6 +62,9 @@ impl RawSocket {
         let value = interface_name.as_str().as_bytes();
         let len = value.len();
 
+        // Safety:
+        // value lives for the duration of the call, and is of size len.
+        // setsockopt is safe to call in all other regards
         unsafe {
             cerr(libc::setsockopt(
                 self.fd,
@@ -86,6 +91,9 @@ impl RawSocket {
                 .ok_or(std::io::ErrorKind::InvalidInput)? as _,
         };
 
+        // Safety:
+        // request lives for the duration of the call, and we pass its size
+        // as option_len. setsockopt is safe to call in all other regards
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
@@ -103,6 +111,9 @@ impl RawSocket {
             .get_index()
             .ok_or(std::io::ErrorKind::InvalidInput)?;
 
+        // Safety:
+        // index lives for the duration of the call, and we pass its size
+        // as option_len. setsockopt is safe to call in all other regards
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
@@ -117,6 +128,10 @@ impl RawSocket {
 
     pub(crate) fn ip_multicast_loop(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
+
+        // Safety:
+        // state lives for the duration of the call, and we pass its size
+        // as option_len. setsockopt is safe to call in all other regards.
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
@@ -131,6 +146,10 @@ impl RawSocket {
 
     pub(crate) fn ipv6_multicast_loop(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
+
+        // Safety:
+        // state lives for the duration of the call, and we pass its size
+        // as option_len. setsockopt is safe to call in all other regards.
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
@@ -145,6 +164,10 @@ impl RawSocket {
 
     pub(crate) fn ipv6_v6only(&self, enabled: bool) -> std::io::Result<()> {
         let state: i32 = if enabled { 1 } else { 0 };
+
+        // Safety:
+        // state lives for the duration of the call, and we pass its size
+        // as option_len. setsockopt is safe to call in all other regards.
         cerr(unsafe {
             libc::setsockopt(
                 self.fd,
