@@ -31,6 +31,12 @@ impl RawSocket {
         }?;
         if options != 0 {
             let clock = libc::SO_TS_REALTIME as u32;
+            // Safety:
+            //
+            // - The socket is proviided by (safe) rust, and will outlive the call
+            // - method is guaranteed to be a valid "name" argument
+            // - clock outlives the call
+            // - option_len corresponds with the size of clock
             unsafe {
                 cerr(libc::setsockopt(
                     self.fd,

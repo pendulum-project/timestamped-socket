@@ -65,6 +65,7 @@ impl RawSocket {
 
     pub(crate) fn set_nonblocking(&self, nonblocking: bool) -> std::io::Result<()> {
         let nonblocking = nonblocking as libc::c_int;
+        // Safety: nonblocking lives for the duration of the call, and is 4 bytes long as expected for FIONBIO
         cerr(unsafe { libc::ioctl(self.fd, libc::FIONBIO, &nonblocking) }).map(drop)
     }
 

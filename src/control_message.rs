@@ -13,6 +13,14 @@ pub(crate) enum MessageQueue {
     Error,
 }
 
+// Invariants:
+// self.mhdr points to a valid libc::msghdr with a valid control
+// message region.
+// self.next_msg points to one of the control messages
+// in the region described by self.mhdr or is NULL
+//
+// These invariants are guaranteed from the safety conditions on
+// calling ControlMessageIterator::new, the fact that next preserves
 // these invariants and that the fields of ControlMessageIterator
 // are not modified outside these two functions.
 pub(crate) struct ControlMessageIterator<'a> {
