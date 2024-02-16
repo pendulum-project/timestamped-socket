@@ -6,6 +6,22 @@ use std::{
 
 use super::cerr;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::ChangeDetector;
+
+// NOTE: this detection logic is not sharable with macos!
+#[cfg(target_os = "freebsd")]
+mod freebsd;
+#[cfg(target_os = "freebsd")]
+pub use freebsd::ChangeDetector;
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+mod fallback;
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub use fallback::ChangeDetector;
+
 pub fn interfaces() -> std::io::Result<HashMap<InterfaceName, InterfaceData>> {
     let mut elements = HashMap::default();
 
