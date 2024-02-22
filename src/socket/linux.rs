@@ -278,7 +278,7 @@ pub fn open_interface_ethernet(
         InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::HardwarePTPRecv => socket
             .driver_enable_hardware_timestamping(
                 interface,
-                libc::HWTSTAMP_FILTER_PTP_V2_L4_EVENT as _,
+                libc::HWTSTAMP_FILTER_PTP_V2_L2_EVENT as _,
             )?,
         InterfaceTimestampMode::None
         | InterfaceTimestampMode::SoftwareAll
