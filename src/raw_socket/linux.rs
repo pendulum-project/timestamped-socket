@@ -4,8 +4,14 @@ use crate::{cerr, interface::InterfaceName};
 
 use super::RawSocket;
 
+#[repr(C)]
+struct so_timestamping {
+    flags: libc::c_int,
+    bind_phc: libc::c_int,
+}
+
 impl RawSocket {
-    pub(crate) fn so_timestamping(&self, options: u32) -> std::io::Result<()> {
+    pub(crate) fn so_timestamping(&self, options: u32, bind_phc: u32) -> std::io::Result<()> {
         // Documentation on the timestamping calls:
         //
         // - linux: https://www.kernel.org/doc/Documentation/networking/timestamping.txt
@@ -22,13 +28,18 @@ impl RawSocket {
         // perfectly safe
         //
         // > Setting other bit returns EINVAL and does not change the current state.
+        let tstamp_config = so_timestamping {
+            flags: options as libc::c_int,
+            bind_phc: bind_phc as libc::c_int,
+        };
+
         unsafe {
             cerr(libc::setsockopt(
                 self.fd,
                 libc::SOL_SOCKET,
                 libc::SO_TIMESTAMPING,
-                &options as *const _ as *const libc::c_void,
-                std::mem::size_of_val(&options) as libc::socklen_t,
+                &tstamp_config as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&tstamp_config) as libc::socklen_t,
             ))
         }?;
         Ok(())
