@@ -266,7 +266,7 @@ pub fn open_ip(
     }?;
     socket.bind(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
-    configure_timestamping(&socket, timestamping.into())?;
+    configure_timestamping(&socket, timestamping.into(), None)?;
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
@@ -289,7 +289,7 @@ pub fn connect_address(
     }?;
     socket.connect(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
-    configure_timestamping(&socket, timestamping.into())?;
+    configure_timestamping(&socket, timestamping.into(), None)?;
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),

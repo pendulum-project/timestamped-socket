@@ -15,6 +15,8 @@ use crate::{
 
 use super::{InterfaceTimestampMode, Open, Socket, Timestamp};
 
+const SOF_TIMESTAMPING_BIND_PHC: libc::c_uint = 1 << 15;
+
 impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) async fn fetch_send_timestamp(
         &self,
@@ -108,6 +110,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 pub(super) fn configure_timestamping(
     socket: &RawSocket,
     mode: InterfaceTimestampMode,
+    bind_phc: Option<u32>,
 ) -> std::io::Result<()> {
     let options = match mode {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwarePTPAll => {
@@ -117,9 +120,16 @@ pub(super) fn configure_timestamping(
                 | libc::SOF_TIMESTAMPING_TX_HARDWARE
                 | libc::SOF_TIMESTAMPING_OPT_TSONLY
                 | libc::SOF_TIMESTAMPING_OPT_ID
+                | bind_phc
+                    .map(|_| SOF_TIMESTAMPING_BIND_PHC)
+                    .unwrap_or_default()
         }
         InterfaceTimestampMode::HardwareRecv | InterfaceTimestampMode::HardwarePTPRecv => {
-            libc::SOF_TIMESTAMPING_RAW_HARDWARE | libc::SOF_TIMESTAMPING_RX_HARDWARE
+            libc::SOF_TIMESTAMPING_RAW_HARDWARE
+                | libc::SOF_TIMESTAMPING_RX_HARDWARE
+                | bind_phc
+                    .map(|_| SOF_TIMESTAMPING_BIND_PHC)
+                    .unwrap_or_default()
         }
         InterfaceTimestampMode::SoftwareAll => {
             libc::SOF_TIMESTAMPING_SOFTWARE
@@ -134,13 +144,14 @@ pub(super) fn configure_timestamping(
         InterfaceTimestampMode::None => return Ok(()),
     };
 
-    socket.so_timestamping(options)
+    socket.so_timestamping(options, bind_phc.unwrap_or_default())
 }
 
 pub fn open_interface_udp(
     interface: InterfaceName,
     port: u16,
     timestamping: InterfaceTimestampMode,
+    bind_phc: Option<u32>,
 ) -> std::io::Result<Socket<SocketAddr, Open>> {
     // Setup the socket
     let socket = RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
@@ -150,7 +161,7 @@ pub fn open_interface_udp(
     socket.bind_to_device(interface)?;
     socket.ipv6_multicast_if(interface)?;
     socket.ipv6_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping)?;
+    configure_timestamping(&socket, timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -179,6 +190,7 @@ pub fn open_interface_udp4(
     interface: InterfaceName,
     port: u16,
     timestamping: InterfaceTimestampMode,
+    bind_phc: Option<u32>,
 ) -> std::io::Result<Socket<SocketAddrV4, Open>> {
     // Setup the socket
     let socket = RawSocket::open(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
@@ -187,7 +199,7 @@ pub fn open_interface_udp4(
     socket.bind_to_device(interface)?;
     socket.ip_multicast_if(interface)?;
     socket.ip_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping)?;
+    configure_timestamping(&socket, timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -216,6 +228,7 @@ pub fn open_interface_udp6(
     interface: InterfaceName,
     port: u16,
     timestamping: InterfaceTimestampMode,
+    bind_phc: Option<u32>,
 ) -> std::io::Result<Socket<SocketAddrV6, Open>> {
     // Setup the socket
     let socket = RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
@@ -225,7 +238,7 @@ pub fn open_interface_udp6(
     socket.bind_to_device(interface)?;
     socket.ipv6_multicast_if(interface)?;
     socket.ipv6_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping)?;
+    configure_timestamping(&socket, timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -254,6 +267,7 @@ pub fn open_interface_ethernet(
     interface: InterfaceName,
     protocol: u16,
     timestamping: InterfaceTimestampMode,
+    bind_phc: Option<u32>,
 ) -> std::io::Result<Socket<EthernetAddress, Open>> {
     let socket = RawSocket::open(
         libc::AF_PACKET,
@@ -270,7 +284,7 @@ pub fn open_interface_ethernet(
         )
         .to_sockaddr(PrivateToken),
     )?;
-    configure_timestamping(&socket, timestamping)?;
+    configure_timestamping(&socket, timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -310,6 +324,7 @@ mod tests {
             InterfaceName::from_str("lo").unwrap(),
             5123,
             super::InterfaceTimestampMode::None,
+            None,
         )
         .unwrap();
         let mut b = connect_address(
@@ -335,6 +350,7 @@ mod tests {
             InterfaceName::from_str("lo").unwrap(),
             5124,
             super::InterfaceTimestampMode::None,
+            None,
         )
         .unwrap();
         let mut b = connect_address(
