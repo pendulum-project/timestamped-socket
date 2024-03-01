@@ -49,6 +49,10 @@ impl InterfaceData {
             .any(|socket_addr| socket_addr.ip() == address)
     }
 
+    pub fn ips(&self) -> impl Iterator<Item = IpAddr> + '_ {
+        self.socket_addrs.iter().map(|a| a.ip())
+    }
+
     pub fn mac(&self) -> Option<[u8; 6]> {
         self.mac
     }
