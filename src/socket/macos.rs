@@ -5,6 +5,7 @@ use super::InterfaceTimestampMode;
 pub(super) fn configure_timestamping(
     socket: &RawSocket,
     mode: InterfaceTimestampMode,
+    _bind_phc: Option<u32>,
 ) -> std::io::Result<()> {
     match mode {
         InterfaceTimestampMode::None => Ok(()),
