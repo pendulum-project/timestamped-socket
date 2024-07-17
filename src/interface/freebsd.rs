@@ -38,7 +38,7 @@ impl ChangeDetector {
         let fd = cerr(unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0) })?;
         // Safety: address is valid for the duration of the call
         cerr(unsafe {
-            libc::bind(
+            libc::connect(
                 fd,
                 address as *mut _ as *mut _,
                 std::mem::size_of_val(address) as _,
