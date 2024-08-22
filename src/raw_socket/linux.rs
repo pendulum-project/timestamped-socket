@@ -5,7 +5,7 @@ use crate::{cerr, interface::InterfaceName};
 use super::RawSocket;
 
 #[repr(C)]
-struct so_timestamping {
+struct SoTimestamping {
     flags: libc::c_int,
     bind_phc: libc::c_int,
 }
@@ -28,7 +28,7 @@ impl RawSocket {
         // perfectly safe
         //
         // > Setting other bit returns EINVAL and does not change the current state.
-        let tstamp_config = so_timestamping {
+        let tstamp_config = SoTimestamping {
             flags: options as libc::c_int,
             bind_phc: bind_phc as libc::c_int,
         };

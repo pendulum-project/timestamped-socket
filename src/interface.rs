@@ -9,7 +9,7 @@ use super::cerr;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::ChangeDetector;
+pub use {linux::lookup_phc, linux::ChangeDetector};
 
 // NOTE: this detection logic is not sharable with macos!
 #[cfg(target_os = "freebsd")]
