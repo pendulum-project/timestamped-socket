@@ -7,7 +7,7 @@ use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
     control_message::{control_message_space, ControlMessage, MessageQueue},
-    interface::InterfaceName,
+    interface::{lookup_phc, InterfaceName},
     networkaddress::{sealed::PrivateToken, EthernetAddress, MacAddress, NetworkAddress},
     raw_socket::RawSocket,
     socket::select_timestamp,
@@ -109,9 +109,17 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 
 pub(super) fn configure_timestamping(
     socket: &RawSocket,
+    interface: Option<InterfaceName>,
     mode: InterfaceTimestampMode,
-    bind_phc: Option<u32>,
+    mut bind_phc: Option<u32>,
 ) -> std::io::Result<()> {
+    // Check if the phc is not the interface-native phc.
+    if let Some(interface) = interface {
+        if lookup_phc(interface) == bind_phc {
+            bind_phc = None
+        }
+    }
+
     let options = match mode {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwarePTPAll => {
             libc::SOF_TIMESTAMPING_RAW_HARDWARE
@@ -161,7 +169,7 @@ pub fn open_interface_udp(
     socket.bind_to_device(interface)?;
     socket.ipv6_multicast_if(interface)?;
     socket.ipv6_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping, bind_phc)?;
+    configure_timestamping(&socket, Some(interface), timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -199,7 +207,7 @@ pub fn open_interface_udp4(
     socket.bind_to_device(interface)?;
     socket.ip_multicast_if(interface)?;
     socket.ip_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping, bind_phc)?;
+    configure_timestamping(&socket, Some(interface), timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -238,7 +246,7 @@ pub fn open_interface_udp6(
     socket.bind_to_device(interface)?;
     socket.ipv6_multicast_if(interface)?;
     socket.ipv6_multicast_loop(false)?;
-    configure_timestamping(&socket, timestamping, bind_phc)?;
+    configure_timestamping(&socket, Some(interface), timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?
@@ -284,7 +292,7 @@ pub fn open_interface_ethernet(
         )
         .to_sockaddr(PrivateToken),
     )?;
-    configure_timestamping(&socket, timestamping, bind_phc)?;
+    configure_timestamping(&socket, Some(interface), timestamping, bind_phc)?;
     match timestamping {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwareRecv => {
             socket.driver_enable_hardware_timestamping(interface, libc::HWTSTAMP_FILTER_ALL as _)?

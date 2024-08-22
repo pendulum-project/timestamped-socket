@@ -44,7 +44,7 @@ jobs:
         # os: [ubuntu-latest, macos-latest]
         os: [ubuntu-latest]
         rust:
-          - 1.66.0
+          - 1.70.0
         target:
           - ""
         features:
@@ -104,7 +104,7 @@ jobs:
           prepare: |
             pkg install -y curl
             curl https://sh.rustup.rs -sSf --output rustup.sh
-            sh rustup.sh -y --profile default --default-toolchain 1.66.0 # cannot use `--profile minimal` because of clippy
+            sh rustup.sh -y --profile default --default-toolchain 1.70.0 # cannot use `--profile minimal` because of clippy
             echo "~~~~ rustc --version ~~~~"
             $HOME/.cargo/bin/rustc --version
             echo "~~~~ freebsd-version ~~~~"
