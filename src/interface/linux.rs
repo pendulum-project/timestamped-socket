@@ -59,7 +59,7 @@ pub fn lookup_phc(interface: InterfaceName) -> Option<u32> {
 
     if error < 0 {
         None
-    } else if ethtool_ts_info.phc_index > 0 {
+    } else if ethtool_ts_info.phc_index >= 0 {
         Some(ethtool_ts_info.phc_index as u32)
     } else {
         None
