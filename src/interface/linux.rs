@@ -49,7 +49,13 @@ pub fn lookup_phc(interface: InterfaceName) -> Option<u32> {
     };
 
     // Safety: request and ethtool_ts_info are live for the duration of the call.
-    let error = unsafe { ioctl(fd, SIOCETHTOOL, &mut request as *mut _ as *mut libc::c_void) };
+    let error = unsafe {
+        ioctl(
+            fd,
+            SIOCETHTOOL as _,
+            &mut request as *mut _ as *mut libc::c_void,
+        )
+    };
 
     // should always close fd
     // Safety: Safe to call close for this file descriptor
