@@ -245,6 +245,12 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     }
 }
 
+impl<S> Socket<std::net::SocketAddrV4, S> {
+    pub fn set_tos(&mut self, tos: u8) -> std::io::Result<()> {
+        self.socket.get_ref().ip_tos(tos)
+    }
+}
+
 impl<A: MulticastJoinable, S> Socket<A, S> {
     pub fn join_multicast(&self, addr: A, interface: InterfaceName) -> std::io::Result<()> {
         addr.join_multicast(self.socket.get_ref().as_raw_fd(), interface, PrivateToken)

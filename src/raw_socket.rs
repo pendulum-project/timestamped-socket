@@ -53,6 +53,19 @@ impl RawSocket {
         Ok(())
     }
 
+    pub(crate) fn ip_tos(&self, tos: u8) -> std::io::Result<()> {
+        cerr(unsafe {
+            libc::setsockopt(
+                self.fd,
+                libc::IPPROTO_IP,
+                libc::IP_TOS,
+                &tos as *const _ as *const _,
+                std::mem::size_of_val(&tos) as _,
+            )
+        })?;
+        Ok(())
+    }
+
     pub(crate) fn connect(&self, addr: sockaddr_storage) -> std::io::Result<()> {
         // Per posix, it may be invalid to specify a length larger than that of the family.
         let len = sockaddr_len(addr);
