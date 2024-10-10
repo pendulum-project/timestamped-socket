@@ -1,3 +1,5 @@
+use super::InterfaceName;
+
 struct Private;
 
 pub struct ChangeDetector {
@@ -13,4 +15,8 @@ impl ChangeDetector {
         // No platform independent way, but checking every so often is fine for a fallback
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
+}
+
+pub fn lookup_phc(_interface: InterfaceName) -> Option<u32> {
+    None
 }
