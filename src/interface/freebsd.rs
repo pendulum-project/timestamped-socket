@@ -5,6 +5,8 @@ use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{cerr, control_message::zeroed_sockaddr_storage};
 
+use super::InterfaceName;
+
 pub struct ChangeDetector {
     fd: AsyncFd<RawFd>,
 }
@@ -98,4 +100,8 @@ impl ChangeDetector {
             tracing::error!("Could not receive on change socket: {}", e);
         }
     }
+}
+
+pub fn lookup_phc(_interface: InterfaceName) -> Option<u32> {
+    None
 }
