@@ -9,18 +9,18 @@ use super::cerr;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use {linux::lookup_phc, linux::ChangeDetector};
+pub use linux::{lookup_phc, ChangeDetector};
 
 // NOTE: this detection logic is not sharable with macos!
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "freebsd")]
-pub use freebsd::ChangeDetector;
+pub use freebsd::{lookup_phc, ChangeDetector};
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-pub use fallback::ChangeDetector;
+pub use fallback::{lookup_phc, ChangeDetector};
 
 pub fn interfaces() -> std::io::Result<HashMap<InterfaceName, InterfaceData>> {
     let mut elements = HashMap::default();
@@ -257,6 +257,11 @@ impl InterfaceName {
             0 => None,
             n => Some(n),
         }
+    }
+
+    /// Do a lookup for the Physical Hardware Clock index for this interface.
+    pub fn lookup_phc(&self) -> Option<u32> {
+        lookup_phc(*self)
     }
 }
 
