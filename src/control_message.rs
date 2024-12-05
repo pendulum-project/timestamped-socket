@@ -29,7 +29,7 @@ pub(crate) struct ControlMessageIterator<'a> {
     phantom: PhantomData<&'a [u8]>,
 }
 
-impl<'a> ControlMessageIterator<'a> {
+impl ControlMessageIterator<'_> {
     // Safety assumptions:
     // mhdr has a control and controllen field
     // that together describe a memory region
@@ -73,7 +73,7 @@ const SCM_TIMESTAMP_NS: libc::c_int = libc::SCM_REALTIME;
 #[cfg(target_os = "linux")]
 const PACKET_TX_TIMESTAMP: libc::c_int = 16;
 
-impl<'a> Iterator for ControlMessageIterator<'a> {
+impl Iterator for ControlMessageIterator<'_> {
     type Item = ControlMessage;
 
     fn next(&mut self) -> Option<Self::Item> {
