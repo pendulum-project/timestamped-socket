@@ -137,7 +137,7 @@ impl RawSocket {
             }
         };
 
-        if mhdr.msg_flags & libc::MSG_TRUNC > 0 {
+        if mhdr.msg_flags & libc::MSG_TRUNC > 0 && !packet_buf.is_empty() {
             tracing::info!(
                 "truncated packet because it was larger than expected: {} bytes",
                 packet_buf.len(),
