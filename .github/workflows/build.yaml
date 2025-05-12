@@ -134,7 +134,7 @@ jobs:
         with:
           version: 0.9.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@5bc300ae6202155e070ca83afb334e8aac18c49c
+        uses: taiki-e/install-action@83254c543806f3224380bf1001d6fac8feaf2d0b
         with:
           tool: cargo-zigbuild
       - name: Run clippy
