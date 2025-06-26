@@ -34,12 +34,16 @@ impl ControlMessageIterator<'_> {
     // mhdr has a control and controllen field
     // that together describe a memory region
     // with lifetime 'a containing valid control
-    // messages
+    // messages, or MSG_CTRUNC is set.
     pub unsafe fn new(mhdr: libc::msghdr) -> Self {
         // Safety:
         // mhdr's control and controllen fields are valid and point
         // to valid control messages.
-        let current_msg = unsafe { libc::CMSG_FIRSTHDR(&mhdr) };
+        let current_msg = if mhdr.msg_flags & libc::MSG_CTRUNC == 0 {
+            unsafe { libc::CMSG_FIRSTHDR(&mhdr) }
+        } else {
+            std::ptr::null()
+        };
 
         // Invariant preservation:
         // The safety assumptions guaranteed by the caller ensure
