@@ -107,7 +107,7 @@ pub struct Socket<A, S> {
     socket: AsyncFd<RawSocket>,
     #[cfg(target_os = "linux")]
     send_counter: u32,
-    _addr: PhantomData<A>,
+    local_addr: A,
     _state: PhantomData<S>,
 }
 
@@ -117,9 +117,8 @@ pub struct Open;
 pub struct Connected;
 
 impl<A: NetworkAddress, S> Socket<A, S> {
-    pub fn local_addr(&self) -> std::io::Result<A> {
-        let addr = self.socket.get_ref().getsockname()?;
-        A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
+    pub fn local_addr(&self) -> A {
+        self.local_addr
     }
 
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
@@ -209,7 +208,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
             socket: self.socket,
             #[cfg(target_os = "linux")]
             send_counter: self.send_counter,
-            _addr: PhantomData,
+            local_addr: self.local_addr,
             _state: PhantomData,
         })
     }
@@ -270,12 +269,15 @@ pub fn open_ip(
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, None, timestamping.into(), None)?;
 
+    let local_addr = SocketAddr::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
         #[cfg(target_os = "linux")]
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }
@@ -293,12 +295,15 @@ pub fn connect_address(
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, None, timestamping.into(), None)?;
 
+    let local_addr = SocketAddr::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping.into(),
         socket: AsyncFd::new(socket)?,
         #[cfg(target_os = "linux")]
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }

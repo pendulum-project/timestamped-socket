@@ -185,11 +185,14 @@ pub fn open_interface_udp(
     }
     socket.set_nonblocking(true)?;
 
+    let local_addr = SocketAddr::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }
@@ -223,11 +226,14 @@ pub fn open_interface_udp4(
     }
     socket.set_nonblocking(true)?;
 
+    let local_addr = SocketAddrV4::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }
@@ -262,11 +268,14 @@ pub fn open_interface_udp6(
     }
     socket.set_nonblocking(true)?;
 
+    let local_addr = SocketAddrV6::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }
@@ -308,11 +317,14 @@ pub fn open_interface_ethernet(
     }
     socket.set_nonblocking(true)?;
 
+    let local_addr = EthernetAddress::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
     Ok(Socket {
         timestamp_mode: timestamping,
         socket: AsyncFd::new(socket)?,
         send_counter: 0,
-        _addr: PhantomData,
+        local_addr,
         _state: PhantomData,
     })
 }
