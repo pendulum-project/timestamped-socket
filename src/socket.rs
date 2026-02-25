@@ -120,11 +120,6 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
     }
 
-    pub fn peer_addr(&self) -> std::io::Result<A> {
-        let addr = self.socket.get_ref().getpeername()?;
-        A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
-    }
-
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
         self.socket
             .async_io(Interest::READABLE, |socket| {
@@ -219,6 +214,11 @@ impl<A: NetworkAddress> Socket<A, Open> {
 }
 
 impl<A: NetworkAddress> Socket<A, Connected> {
+    pub fn peer_addr(&self) -> std::io::Result<A> {
+        let addr = self.socket.get_ref().getpeername()?;
+        A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
+    }
+
     pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.send(buf))
