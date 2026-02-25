@@ -24,7 +24,7 @@ pub(crate) mod sealed {
     pub struct PrivateToken;
 }
 
-pub trait NetworkAddress: Sized + SealedNA {
+pub trait NetworkAddress: Copy + Sized + SealedNA {
     #[doc(hidden)]
     fn to_sockaddr(&self, _token: PrivateToken) -> libc::sockaddr_storage;
     #[doc(hidden)]
