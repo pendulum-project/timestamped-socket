@@ -10,6 +10,8 @@ const SCM_TIMESTAMP_CMSG_SIZE: usize = control_message_space::<libc::timeval>();
 #[cfg(target_os = "linux")]
 const RECEIVERR_CMSG_SIZE: usize =
     control_message_space::<(libc::sock_extended_err, libc::sockaddr_storage)>();
+#[cfg(any(target_os = "freebsd", target_os = "macos"))]
+const IP_RECVDSTADDR_CMSG_SIZE: usize = control_message_space::<libc::in_addr>();
 
 // Utility needed since the ord trait max function is not usable in const environments
 const fn max(a: usize, b: usize) -> usize {
@@ -27,8 +29,10 @@ pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = max(
 ) + RECEIVERR_CMSG_SIZE;
 #[cfg(target_os = "freebsd")]
 pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
-    max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE);
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE) + IP_RECVDSTADDR_CMSG_SIZE;
+#[cfg(target_os = "macos")]
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE + IP_RECVDSTADDR_CMSG_SIZE;
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
 pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE;
 
 const fn control_message_space<T>() -> usize {
@@ -199,6 +203,23 @@ impl Iterator for ControlMessageIterator<'_> {
 
                 ControlMessage::ReceiveError(error)
             }
+
+            #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+            (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
+                // Safety:
+                // current_msg was constructed from a pointer that pointed to a valid
+                // control message.
+                // IP_RECVDSTADDR always has a in_addr in the data
+                let in_addr = unsafe {
+                    let ptr = libc::CMSG_DATA(current_msg) as *const libc::in_addr;
+                    std::ptr::read_unaligned(ptr)
+                };
+
+                ControlMessage::DestinationIp(
+                    std::net::Ipv4Addr::from_bits(u32::from_be(in_addr.s_addr)).into(),
+                )
+            }
+
             _ => ControlMessage::Other(*current_msg),
         })
     }
