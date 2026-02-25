@@ -90,6 +90,10 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     }
                 }
 
+                ControlMessage::DestinationIp(_) => {
+                    tracing::debug!("unexpected destination ip control message");
+                }
+
                 ControlMessage::Other(msg) => {
                     tracing::warn!(
                         msg.cmsg_level,
