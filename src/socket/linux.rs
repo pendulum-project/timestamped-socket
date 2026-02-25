@@ -6,7 +6,7 @@ use std::{
 use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
-    control_message::{control_message_space, ControlMessage, MessageQueue},
+    control_message::{ControlMessage, MessageQueue, EXPECTED_MAX_CMSG_SIZE},
     interface::{lookup_phc, InterfaceName},
     networkaddress::{sealed::PrivateToken, EthernetAddress, MacAddress, NetworkAddress},
     raw_socket::RawSocket,
@@ -52,10 +52,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         &self,
         expected_counter: u32,
     ) -> std::io::Result<Option<Timestamp>> {
-        const CONTROL_SIZE: usize = control_message_space::<[libc::timespec; 3]>()
-            + control_message_space::<(libc::sock_extended_err, libc::sockaddr_storage)>();
-
-        let mut control_buf = [0; CONTROL_SIZE];
+        let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
         // NOTE: this read could block!
         let (_, control_messages, _) = self.socket.get_ref().receive_message(

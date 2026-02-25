@@ -2,7 +2,36 @@ use std::marker::PhantomData;
 
 use crate::socket::Timestamp;
 
-pub(crate) const fn control_message_space<T>() -> usize {
+#[cfg(target_os = "linux")]
+const SCM_TIMESTAMPING_CMSG_SIZE: usize = control_message_space::<[libc::timespec; 3]>();
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const SCM_TIMESTAMP_NS_CMSG_SIZE: usize = control_message_space::<libc::timespec>();
+const SCM_TIMESTAMP_CMSG_SIZE: usize = control_message_space::<libc::timeval>();
+#[cfg(target_os = "linux")]
+const RECEIVERR_CMSG_SIZE: usize =
+    control_message_space::<(libc::sock_extended_err, libc::sockaddr_storage)>();
+
+// Utility needed since the ord trait max function is not usable in const environments
+const fn max(a: usize, b: usize) -> usize {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = max(
+    max(SCM_TIMESTAMPING_CMSG_SIZE, SCM_TIMESTAMP_NS_CMSG_SIZE),
+    SCM_TIMESTAMP_CMSG_SIZE,
+) + RECEIVERR_CMSG_SIZE;
+#[cfg(target_os = "freebsd")]
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
+    max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE);
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE;
+
+const fn control_message_space<T>() -> usize {
     // Safety: CMSG_SPACE is safe to call
     (unsafe { libc::CMSG_SPACE((std::mem::size_of::<T>()) as _) }) as usize
 }
