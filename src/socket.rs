@@ -111,7 +111,9 @@ pub struct Socket<A, S> {
     _state: PhantomData<S>,
 }
 
+#[non_exhaustive]
 pub struct Open;
+#[non_exhaustive]
 pub struct Connected;
 
 impl<A: NetworkAddress, S> Socket<A, S> {
