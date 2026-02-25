@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, net::IpAddr};
 
 use crate::socket::Timestamp;
 
@@ -95,6 +95,8 @@ pub(crate) enum ControlMessage {
     },
     #[cfg(target_os = "linux")]
     ReceiveError(libc::sock_extended_err),
+    #[expect(unused)]
+    DestinationIp(IpAddr),
     Other(libc::cmsghdr),
 }
 

@@ -98,6 +98,7 @@ fn select_timestamp(
 pub struct RecvResult<A> {
     pub bytes_read: usize,
     pub remote_addr: A,
+    pub local_addr: A,
     pub timestamp: Option<Timestamp>,
 }
 
@@ -131,6 +132,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
 
                 let mut timestamp = None;
+                let mut local_addr = self.local_addr;
 
                 // Loops through the control messages, but we should only get a single message
                 // in practice
@@ -149,6 +151,12 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                             );
                         }
 
+                        ControlMessage::DestinationIp(addr) => {
+                            if let Some(addr) = A::from_ip_and_port(addr, self.local_addr.port()) {
+                                local_addr = addr;
+                            }
+                        }
+
                         ControlMessage::Other(msg) => {
                             tracing::debug!(
                                 "unexpected control message on receive: {} {}",
@@ -165,6 +173,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                 Ok(RecvResult {
                     bytes_read,
                     remote_addr,
+                    local_addr,
                     timestamp,
                 })
             })
