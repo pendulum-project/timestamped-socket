@@ -164,6 +164,7 @@ pub fn open_interface_udp(
 ) -> std::io::Result<Socket<SocketAddr, Open>> {
     // Setup the socket
     let socket = RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
+    socket.enable_destination_ipv4()?;
     socket.reuse_addr()?;
     socket.ipv6_v6only(false)?;
     socket.bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0).to_sockaddr(PrivateToken))?;
@@ -206,6 +207,7 @@ pub fn open_interface_udp4(
 ) -> std::io::Result<Socket<SocketAddrV4, Open>> {
     // Setup the socket
     let socket = RawSocket::open(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
+    socket.enable_destination_ipv4()?;
     socket.reuse_addr()?;
     socket.bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port).to_sockaddr(PrivateToken))?;
     socket.bind_to_device(interface)?;

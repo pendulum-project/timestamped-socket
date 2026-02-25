@@ -10,6 +10,8 @@ const SCM_TIMESTAMP_CMSG_SIZE: usize = control_message_space::<libc::timeval>();
 #[cfg(target_os = "linux")]
 const RECEIVERR_CMSG_SIZE: usize =
     control_message_space::<(libc::sock_extended_err, libc::sockaddr_storage)>();
+#[cfg(target_os = "linux")]
+const IP_PKTINFO_CMSG_SIZE: usize = control_message_space::<libc::in_pktinfo>();
 #[cfg(any(target_os = "freebsd", target_os = "macos"))]
 const IP_RECVDSTADDR_CMSG_SIZE: usize = control_message_space::<libc::in_addr>();
 
@@ -26,7 +28,8 @@ const fn max(a: usize, b: usize) -> usize {
 pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = max(
     max(SCM_TIMESTAMPING_CMSG_SIZE, SCM_TIMESTAMP_NS_CMSG_SIZE),
     SCM_TIMESTAMP_CMSG_SIZE,
-) + RECEIVERR_CMSG_SIZE;
+) + IP_PKTINFO_CMSG_SIZE
+    + RECEIVERR_CMSG_SIZE;
 #[cfg(target_os = "freebsd")]
 pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
     max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE) + IP_RECVDSTADDR_CMSG_SIZE;
@@ -99,7 +102,6 @@ pub(crate) enum ControlMessage {
     },
     #[cfg(target_os = "linux")]
     ReceiveError(libc::sock_extended_err),
-    #[expect(unused)]
     DestinationIp(IpAddr),
     Other(libc::cmsghdr),
 }
@@ -202,6 +204,22 @@ impl Iterator for ControlMessageIterator<'_> {
                 };
 
                 ControlMessage::ReceiveError(error)
+            }
+
+            #[cfg(target_os = "linux")]
+            (libc::SOL_IP, libc::IP_PKTINFO) => {
+                // Safety:
+                // current_msg was constructed from a pointer that pointed to a valid
+                // control message.
+                // IP_PKTINFO always has a in_pktinfo in the data
+                let pktinfo = unsafe {
+                    let ptr = libc::CMSG_DATA(current_msg) as *const libc::in_pktinfo;
+                    std::ptr::read_unaligned(ptr)
+                };
+
+                ControlMessage::DestinationIp(
+                    std::net::Ipv4Addr::from_bits(u32::from_be(pktinfo.ipi_addr.s_addr)).into(),
+                )
             }
 
             #[cfg(any(target_os = "freebsd", target_os = "macos"))]
