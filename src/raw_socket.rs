@@ -12,6 +12,8 @@ use crate::{
     },
 };
 
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+mod bsdlike;
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "linux")]

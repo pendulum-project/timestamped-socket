@@ -11,6 +11,11 @@ struct SoTimestamping {
 }
 
 impl RawSocket {
+    pub(crate) fn enable_destination_ipv4(&self) -> std::io::Result<()> {
+        // FIXME: Implement this
+        Ok(())
+    }
+
     pub(crate) fn so_timestamping(&self, options: u32, bind_phc: u32) -> std::io::Result<()> {
         // Documentation on the timestamping calls:
         //

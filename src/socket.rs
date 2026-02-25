@@ -274,6 +274,10 @@ pub fn open_ip(
         SocketAddr::V4(_) => RawSocket::open(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_UDP),
         SocketAddr::V6(_) => RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP),
     }?;
+    match addr {
+        SocketAddr::V4(_) => socket.enable_destination_ipv4()?,
+        SocketAddr::V6(_) => { /*FIXME: enable destination addresses for ipv6*/ }
+    }
     socket.bind(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, None, timestamping.into(), None)?;
@@ -300,6 +304,10 @@ pub fn connect_address(
         SocketAddr::V4(_) => RawSocket::open(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_UDP),
         SocketAddr::V6(_) => RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP),
     }?;
+    match addr {
+        SocketAddr::V4(_) => socket.enable_destination_ipv4()?,
+        SocketAddr::V6(_) => { /*FIXME: enable destination addresses for ipv6*/ }
+    }
     socket.connect(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
     configure_timestamping(&socket, None, timestamping.into(), None)?;
