@@ -276,7 +276,7 @@ pub fn open_ip(
     }?;
     match addr {
         SocketAddr::V4(_) => socket.enable_destination_ipv4()?,
-        SocketAddr::V6(_) => { /*FIXME: enable destination addresses for ipv6*/ }
+        SocketAddr::V6(_) => socket.enable_destination_ipv6()?,
     }
     socket.bind(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
@@ -306,7 +306,7 @@ pub fn connect_address(
     }?;
     match addr {
         SocketAddr::V4(_) => socket.enable_destination_ipv4()?,
-        SocketAddr::V6(_) => { /*FIXME: enable destination addresses for ipv6*/ }
+        SocketAddr::V6(_) => socket.enable_destination_ipv6()?,
     }
     socket.connect(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;

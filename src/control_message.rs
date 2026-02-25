@@ -14,6 +14,7 @@ const RECEIVERR_CMSG_SIZE: usize =
 const IP_PKTINFO_CMSG_SIZE: usize = control_message_space::<libc::in_pktinfo>();
 #[cfg(any(target_os = "freebsd", target_os = "macos"))]
 const IP_RECVDSTADDR_CMSG_SIZE: usize = control_message_space::<libc::in_addr>();
+const IP6_PKTINFO_CMSG_SIZE: usize = control_message_space::<libc::in6_pktinfo>();
 
 // Utility needed since the ord trait max function is not usable in const environments
 const fn max(a: usize, b: usize) -> usize {
@@ -25,18 +26,21 @@ const fn max(a: usize, b: usize) -> usize {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = max(
-    max(SCM_TIMESTAMPING_CMSG_SIZE, SCM_TIMESTAMP_NS_CMSG_SIZE),
-    SCM_TIMESTAMP_CMSG_SIZE,
-) + IP_PKTINFO_CMSG_SIZE
-    + RECEIVERR_CMSG_SIZE;
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
+    max(
+        max(SCM_TIMESTAMPING_CMSG_SIZE, SCM_TIMESTAMP_NS_CMSG_SIZE),
+        SCM_TIMESTAMP_CMSG_SIZE,
+    ) + max(IP_PKTINFO_CMSG_SIZE, IP6_PKTINFO_CMSG_SIZE)
+        + RECEIVERR_CMSG_SIZE;
 #[cfg(target_os = "freebsd")]
 pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
-    max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE) + IP_RECVDSTADDR_CMSG_SIZE;
+    max(SCM_TIMESTAMP_NS_CMSG_SIZE, SCM_TIMESTAMP_CMSG_SIZE)
+        + max(IP_RECVDSTADDR_CMSG_SIZE, IP6_PKTINFO_CMSG_SIZE);
 #[cfg(target_os = "macos")]
-pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE + IP_RECVDSTADDR_CMSG_SIZE;
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize =
+    SCM_TIMESTAMP_CMSG_SIZE + max(IP_RECVDSTADDR_CMSG_SIZE, IP6_PKTINFO_CMSG_SIZE);
 #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
-pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE;
+pub(crate) const EXPECTED_MAX_CMSG_SIZE: usize = SCM_TIMESTAMP_CMSG_SIZE + IP6_PKTINFO_CMSG_SIZE;
 
 const fn control_message_space<T>() -> usize {
     // Safety: CMSG_SPACE is safe to call
@@ -235,6 +239,22 @@ impl Iterator for ControlMessageIterator<'_> {
 
                 ControlMessage::DestinationIp(
                     std::net::Ipv4Addr::from_bits(u32::from_be(in_addr.s_addr)).into(),
+                )
+            }
+
+            (libc::SOL_IPV6, libc::IPV6_PKTINFO) => {
+                // Safety:
+                // current_msg was constructed from a pointer that pointed to a valid
+                // control message.
+                // IPV6_PKTINFO always has a in6_pktinfo in the data
+                let pktinfo = unsafe {
+                    let ptr = libc::CMSG_DATA(current_msg) as *const libc::in6_pktinfo;
+                    std::ptr::read_unaligned(ptr)
+                };
+
+                ControlMessage::DestinationIp(
+                    std::net::Ipv6Addr::from_bits(u128::from_be_bytes(pktinfo.ipi6_addr.s6_addr))
+                        .into(),
                 )
             }
 
