@@ -328,7 +328,7 @@ pub fn connect_address(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[tokio::test]
     async fn test_open_ip() {
@@ -351,5 +351,48 @@ mod tests {
         let recv_result = b.recv(&mut buf).await.unwrap();
         assert_eq!(recv_result.bytes_read, 3);
         assert_eq!(&buf[0..3], &[4, 5, 6]);
+    }
+
+    #[tokio::test]
+    async fn test_open_ip_dest_addr() {
+        let a = open_ip(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 5127),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5127),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        assert!(b.send(&[1, 2, 3]).await.is_ok());
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5127)
+        );
+
+        let a = open_ip(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5129),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5129),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        assert!(b.send(&[1, 2, 3]).await.is_ok());
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5129)
+        );
     }
 }

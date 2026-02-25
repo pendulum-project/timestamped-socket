@@ -343,6 +343,48 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn test_open_udp() {
+        use std::str::FromStr;
+        let a = open_interface_udp(
+            InterfaceName::from_str("lo").unwrap(),
+            5128,
+            super::InterfaceTimestampMode::None,
+            None,
+        )
+        .unwrap();
+
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5128),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        assert!(b.send(&[1, 2, 3]).await.is_ok());
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5128)
+        );
+
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5128),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        assert!(b.send(&[1, 2, 3]).await.is_ok());
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5128)
+        );
+    }
+
+    #[tokio::test]
     async fn test_open_udp6() {
         use std::str::FromStr;
         let mut a = open_interface_udp6(
@@ -362,6 +404,10 @@ mod tests {
         let recv_result = a.recv(&mut buf).await.unwrap();
         assert_eq!(recv_result.bytes_read, 3);
         assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddrV6::new(Ipv6Addr::LOCALHOST, 5123, 0, 0)
+        );
         assert!(a.send_to(&[4, 5, 6], recv_result.remote_addr).await.is_ok());
         let recv_result = b.recv(&mut buf).await.unwrap();
         assert_eq!(recv_result.bytes_read, 3);
@@ -388,6 +434,10 @@ mod tests {
         let recv_result = a.recv(&mut buf).await.unwrap();
         assert_eq!(recv_result.bytes_read, 3);
         assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.local_addr,
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 5124)
+        );
         assert!(a.send_to(&[4, 5, 6], recv_result.remote_addr).await.is_ok());
         let recv_result = b.recv(&mut buf).await.unwrap();
         assert_eq!(recv_result.bytes_read, 3);
