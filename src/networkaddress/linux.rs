@@ -120,6 +120,15 @@ impl NetworkAddress for EthernetAddress {
             input.sll_ifindex,
         ))
     }
+
+    fn from_ip_and_port(_addr: std::net::IpAddr, _port: u16) -> Option<Self> {
+        None
+    }
+
+    fn port(&self) -> u16 {
+        // Ethernet doesn't have a port, zero is a decent sentinal value to cover that.
+        0
+    }
 }
 
 impl SealedMC for EthernetAddress {}

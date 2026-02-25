@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::fd::RawFd,
 };
 
@@ -29,6 +29,10 @@ pub trait NetworkAddress: Copy + Sized + SealedNA {
     fn to_sockaddr(&self, _token: PrivateToken) -> libc::sockaddr_storage;
     #[doc(hidden)]
     fn from_sockaddr(addr: libc::sockaddr_storage, _token: PrivateToken) -> Option<Self>;
+    #[doc(hidden)]
+    fn from_ip_and_port(addr: IpAddr, port: u16) -> Option<Self>;
+    #[doc(hidden)]
+    fn port(&self) -> u16;
 }
 
 pub trait MulticastJoinable: NetworkAddress + SealedMC {
@@ -98,6 +102,17 @@ impl NetworkAddress for SocketAddrV4 {
             u16::from_be_bytes(input.sin_port.to_ne_bytes()),
         ))
     }
+
+    fn from_ip_and_port(addr: IpAddr, port: u16) -> Option<Self> {
+        match addr {
+            IpAddr::V4(addr) => Some(SocketAddrV4::new(addr, port)),
+            IpAddr::V6(_) => None,
+        }
+    }
+
+    fn port(&self) -> u16 {
+        self.port()
+    }
 }
 
 impl SealedNA for SocketAddrV6 {}
@@ -154,6 +169,17 @@ impl NetworkAddress for SocketAddrV6 {
             input.sin6_scope_id,
         ))
     }
+
+    fn from_ip_and_port(addr: IpAddr, port: u16) -> Option<Self> {
+        match addr {
+            IpAddr::V4(_) => None,
+            IpAddr::V6(addr) => Some(SocketAddrV6::new(addr, port, 0, 0)),
+        }
+    }
+
+    fn port(&self) -> u16 {
+        self.port()
+    }
 }
 
 impl SealedNA for SocketAddr {}
@@ -178,5 +204,13 @@ impl NetworkAddress for SocketAddr {
             )?)),
             _ => None,
         }
+    }
+
+    fn from_ip_and_port(addr: IpAddr, port: u16) -> Option<Self> {
+        Some(SocketAddr::new(addr, port))
+    }
+
+    fn port(&self) -> u16 {
+        self.port()
     }
 }
