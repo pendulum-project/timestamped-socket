@@ -3,7 +3,7 @@ use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd};
 use tokio::io::{unix::AsyncFd, Interest};
 
 use crate::{
-    control_message::{control_message_space, ControlMessage, MessageQueue},
+    control_message::{ControlMessage, MessageQueue, EXPECTED_MAX_CMSG_SIZE},
     interface::InterfaceName,
     networkaddress::{sealed::PrivateToken, MulticastJoinable, NetworkAddress},
     raw_socket::RawSocket,
@@ -124,7 +124,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
         self.socket
             .async_io(Interest::READABLE, |socket| {
-                let mut control_buf = [0; control_message_space::<[libc::timespec; 3]>()];
+                let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
                 // loops for when we receive an interrupt during the recv
                 let (bytes_read, control_messages, remote_address) =
