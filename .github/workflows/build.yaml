@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: test on freebsd
-        uses: vmactions/freebsd-vm@c9f815bc7aa0d34c9fdd0619b034a32d6ca7b57e
+        uses: vmactions/freebsd-vm@4807432c7cab1c3f97688665332c0b932062d31f
         with:
           usesh: true
           mem: 4096
@@ -134,7 +134,7 @@ jobs:
         with:
           version: 0.9.0
       - name: Install cargo-zigbuild
-        uses: taiki-e/install-action@a37010ded18ff788be4440302bd6830b1ae50d8b
+        uses: taiki-e/install-action@de6bbd1333b8f331563d54a051e542c7dfef81c3
         with:
           tool: cargo-zigbuild
       - name: Run clippy
