@@ -147,7 +147,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 
                         #[cfg(target_os = "linux")]
                         ControlMessage::ReceiveError(error) => {
-                            tracing::warn!(
+                            tracing::debug!(
                                 "unexpected error control message on receive: {}",
                                 error.ee_errno
                             );
