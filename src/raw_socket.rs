@@ -138,14 +138,14 @@ impl RawSocket {
         };
 
         if mhdr.msg_flags & libc::MSG_TRUNC > 0 && !packet_buf.is_empty() {
-            tracing::info!(
+            tracing::debug!(
                 "truncated packet because it was larger than expected: {} bytes",
                 packet_buf.len(),
             );
         }
 
         if mhdr.msg_flags & libc::MSG_CTRUNC > 0 {
-            tracing::info!("truncated control messages");
+            tracing::debug!("truncated control messages");
         }
 
         // Clear out the fields for which we are giving up the reference

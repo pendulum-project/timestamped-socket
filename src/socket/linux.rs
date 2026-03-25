@@ -75,7 +75,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     // the timestamping does not set a message; if there is a message, that means
                     // something else is wrong, and we want to know about it.
                     if error.ee_errno as libc::c_int != libc::ENOMSG {
-                        tracing::warn!(
+                        tracing::debug!(
                             expected_counter,
                             error.ee_data,
                             "error message on the MSG_ERRQUEUE"
@@ -94,7 +94,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                 }
 
                 ControlMessage::Other(msg) => {
-                    tracing::warn!(
+                    tracing::debug!(
                         msg.cmsg_level,
                         msg.cmsg_type,
                         "unexpected message on the MSG_ERRQUEUE",
