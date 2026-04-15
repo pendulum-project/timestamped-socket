@@ -14,6 +14,8 @@ use crate::{
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 mod bsdlike;
+#[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "linux")))]
+mod fallback;
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "linux")]
