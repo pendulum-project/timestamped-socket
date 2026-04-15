@@ -1,9 +1,11 @@
 use std::{
     io::IoSliceMut,
+    mem::transmute,
     os::fd::{AsRawFd, RawFd},
+    ptr::write_unaligned,
 };
 
-use libc::{c_void, sockaddr, sockaddr_storage};
+use libc::{c_void, in6_addr, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
 
 use crate::{
     cerr,
@@ -218,6 +220,108 @@ impl RawSocket {
         Ok(())
     }
 
+    pub(crate) fn send_from_to(
+        &self,
+        msg: &[u8],
+        from: sockaddr_storage,
+        to: sockaddr_storage,
+    ) -> std::io::Result<()> {
+        match from.ss_family as libc::c_int {
+            libc::AF_INET => {
+                // Safety:
+                // Transmuting &sockaddr_storage into another sockaddr reference type is safe, and in this case the lifetimes work out.
+                let from = unsafe { transmute::<&sockaddr_storage, &sockaddr_in>(&from) };
+                self.send_from_to_v4(msg, from.sin_addr, to)
+            }
+            libc::AF_INET6 => {
+                // Safety:
+                // Transmuting &sockaddr_storage into another sockaddr reference type is safe, and in this case the lifetimes work out.
+                let from = unsafe { transmute::<&sockaddr_storage, &sockaddr_in6>(&from) };
+                self.send_from_to_v6(msg, from.sin6_addr, to)
+            }
+            _ => Err(std::io::ErrorKind::InvalidInput.into()),
+        }
+    }
+
+    pub(crate) fn send_from(&self, msg: &[u8], addr: sockaddr_storage) -> std::io::Result<()> {
+        match addr.ss_family as libc::c_int {
+            libc::AF_INET => {
+                // Safety:
+                // Transmuting &sockaddr_storage into another sockaddr reference type is safe, and in this case the lifetimes work out.
+                let from = unsafe { transmute::<&sockaddr_storage, &sockaddr_in>(&addr) };
+                self.send_from_v4(msg, from.sin_addr)
+            }
+            libc::AF_INET6 => {
+                // Safety:
+                // Transmuting &sockaddr_storage into another sockaddr reference type is safe, and in this case the lifetimes work out.
+                let from = unsafe { transmute::<&sockaddr_storage, &sockaddr_in6>(&addr) };
+                self.send_from_v6(msg, from.sin6_addr)
+            }
+            _ => Err(std::io::ErrorKind::InvalidInput.into()),
+        }
+    }
+
+    pub(crate) fn send_from_v6(&self, msg: &[u8], addr: in6_addr) -> std::io::Result<()> {
+        let control_message = control_message(
+            libc::IPPROTO_IPV6,
+            libc::IPV6_PKTINFO,
+            libc::in6_pktinfo {
+                ipi6_addr: addr,
+                ipi6_ifindex: 0,
+            },
+        );
+
+        let mut iov = libc::iovec {
+            iov_base: msg.as_ptr() as *mut libc::c_void,
+            iov_len: msg.len(),
+        };
+
+        let mut msghdr = empty_msghdr();
+        msghdr.msg_iov = &raw mut iov;
+        msghdr.msg_iovlen = 1;
+        msghdr.msg_control = control_message.as_ptr() as *mut _;
+        msghdr.msg_controllen = control_message.len() as _;
+
+        // Safety:
+        // msghdr is valid.
+        cerr(unsafe { libc::sendmsg(self.fd, &raw const msghdr, 0) } as _).map(|_| {})
+    }
+
+    pub(crate) fn send_from_to_v6(
+        &self,
+        msg: &[u8],
+        from: in6_addr,
+        to: sockaddr_storage,
+    ) -> std::io::Result<()> {
+        let to_len = sockaddr_len(to);
+
+        let control_message = control_message(
+            libc::IPPROTO_IPV6,
+            libc::IPV6_PKTINFO,
+            libc::in6_pktinfo {
+                ipi6_addr: from,
+                ipi6_ifindex: 0,
+            },
+        );
+
+        let mut iov = libc::iovec {
+            iov_base: msg.as_ptr() as *mut libc::c_void,
+            iov_len: msg.len(),
+        };
+
+        let mut msghdr = empty_msghdr();
+        msghdr.msg_name = &raw const to as *mut _;
+        msghdr.msg_namelen = to_len;
+        msghdr.msg_iov = &raw mut iov;
+        msghdr.msg_iovlen = 1;
+        msghdr.msg_control = control_message.as_ptr() as *mut _;
+        msghdr.msg_controllen = control_message.len() as _;
+
+        // Safety:
+        // msghdr is valid.
+        cerr(unsafe { libc::sendmsg(self.fd, &raw const msghdr, 0) } as _).map(|_| {})
+    }
+
     pub(crate) fn getsockname(&self) -> std::io::Result<sockaddr_storage> {
         let mut addr = zeroed_sockaddr_storage();
         let mut addr_len: libc::socklen_t = std::mem::size_of_val(&addr) as _;
@@ -261,6 +365,39 @@ fn sockaddr_len(addr: sockaddr_storage) -> u32 {
         libc::AF_INET6 => std::mem::size_of::<libc::sockaddr_in6>() as _,
         _ => len,
     })
+}
+
+// Generate a control message with T as its contents
+// Guarantees that the resulting vec contains valid control messages.
+fn control_message<T>(level: libc::c_int, type_: libc::c_int, content: T) -> Vec<u8> {
+    // Safety:
+    // libc::CMSG_SPACE is always safe to call.
+    let mut control_message = vec![0u8; unsafe { libc::CMSG_SPACE(size_of::<T>() as _) } as _];
+
+    // Safety:
+    // libc::CMSG_LEN is always safe to call.
+    let header = libc::cmsghdr {
+        cmsg_len: unsafe { libc::CMSG_LEN(size_of::<T>() as _) } as _,
+        cmsg_level: level,
+        cmsg_type: type_,
+    };
+    // Safety:
+    // libc::CMSG_SPACE ensures we have sufficient space for the control message header.
+    unsafe { write_unaligned(control_message.as_mut_ptr() as *mut libc::cmsghdr, header) };
+
+    // Safety:
+    // libc::CMSG_SPACE ensures we have sufficient space for the control message contents.
+    // libc::CMSG_DATA ensures we write that content at a valid offset.
+    // libc::CMSG_DATA provides a valid pointer to the contents of a control message when provided
+    // with a valid pointer to a control message header, which we have in the buffer.
+    unsafe {
+        write_unaligned(
+            libc::CMSG_DATA(control_message.as_mut_ptr() as *mut libc::cmsghdr) as *mut T,
+            content,
+        )
+    };
+
+    control_message
 }
 
 impl Drop for RawSocket {
