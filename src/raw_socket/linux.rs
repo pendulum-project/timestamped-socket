@@ -1,8 +1,12 @@
 use std::net::Ipv4Addr;
 
-use crate::{cerr, interface::InterfaceName};
+use libc::{in_addr, sockaddr_storage};
 
-use super::RawSocket;
+use crate::{
+    cerr, control_message::empty_msghdr, interface::InterfaceName, raw_socket::sockaddr_len,
+};
+
+use super::{control_message, RawSocket};
 
 #[repr(C)]
 struct SoTimestamping {
@@ -208,5 +212,68 @@ impl RawSocket {
             )
         })?;
         Ok(())
+    }
+
+    pub(crate) fn send_from_v4(&self, msg: &[u8], addr: in_addr) -> std::io::Result<()> {
+        let control_message = control_message(
+            libc::IPPROTO_IP,
+            libc::IP_PKTINFO,
+            libc::in_pktinfo {
+                ipi_ifindex: 0,
+                ipi_spec_dst: addr,
+                ipi_addr: libc::in_addr { s_addr: 0 },
+            },
+        );
+
+        let mut iov = libc::iovec {
+            iov_base: msg.as_ptr() as *mut libc::c_void,
+            iov_len: msg.len(),
+        };
+
+        let mut msghdr = empty_msghdr();
+        msghdr.msg_iov = &raw mut iov;
+        msghdr.msg_iovlen = 1;
+        msghdr.msg_control = control_message.as_ptr() as *mut _;
+        msghdr.msg_controllen = control_message.len() as _;
+
+        // Safety:
+        // msghdr is valid.
+        cerr(unsafe { libc::sendmsg(self.fd, &raw const msghdr, 0) } as _).map(|_| {})
+    }
+
+    pub(crate) fn send_from_to_v4(
+        &self,
+        msg: &[u8],
+        from: in_addr,
+        to: sockaddr_storage,
+    ) -> std::io::Result<()> {
+        let to_len = sockaddr_len(to);
+
+        let control_message = control_message(
+            libc::IPPROTO_IP,
+            libc::IP_PKTINFO,
+            libc::in_pktinfo {
+                ipi_ifindex: 0,
+                ipi_spec_dst: from,
+                ipi_addr: libc::in_addr { s_addr: 0 },
+            },
+        );
+
+        let mut iov = libc::iovec {
+            iov_base: msg.as_ptr() as *mut libc::c_void,
+            iov_len: msg.len(),
+        };
+
+        let mut msghdr = empty_msghdr();
+        msghdr.msg_name = &raw const to as *mut _;
+        msghdr.msg_namelen = to_len;
+        msghdr.msg_iov = &raw mut iov;
+        msghdr.msg_iovlen = 1;
+        msghdr.msg_control = control_message.as_ptr() as *mut _;
+        msghdr.msg_controllen = control_message.len() as _;
+
+        // Safety:
+        // msghdr is valid.
+        cerr(unsafe { libc::sendmsg(self.fd, &raw const msghdr, 0) } as _).map(|_| {})
     }
 }

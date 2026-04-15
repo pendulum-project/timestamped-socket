@@ -209,6 +209,41 @@ impl<A: NetworkAddress> Socket<A, Open> {
         }
     }
 
+    pub async fn send_from_to(
+        &mut self,
+        buf: &[u8],
+        from: A,
+        to: A,
+    ) -> std::io::Result<Option<Timestamp>> {
+        let from = from.to_sockaddr(PrivateToken);
+        let to = to.to_sockaddr(PrivateToken);
+
+        self.socket
+            .async_io(Interest::WRITABLE, |socket| {
+                socket.send_from_to(buf, from, to)
+            })
+            .await?;
+
+        if matches!(
+            self.timestamp_mode,
+            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
+        ) {
+            #[cfg(target_os = "linux")]
+            {
+                let expected_counter = self.send_counter;
+                self.send_counter = self.send_counter.wrapping_add(1);
+                self.fetch_send_timestamp(expected_counter).await
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn connect(self, addr: A) -> std::io::Result<Socket<A, Connected>> {
         let addr = addr.to_sockaddr(PrivateToken);
         self.socket.get_ref().connect(addr)?;
@@ -232,6 +267,32 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.send(buf))
+            .await?;
+
+        if matches!(
+            self.timestamp_mode,
+            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
+        ) {
+            #[cfg(target_os = "linux")]
+            {
+                let expected_counter = self.send_counter;
+                self.send_counter = self.send_counter.wrapping_add(1);
+                self.fetch_send_timestamp(expected_counter).await
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<Option<Timestamp>> {
+        let from = from.to_sockaddr(PrivateToken);
+        self.socket
+            .async_io(Interest::WRITABLE, |socket| socket.send_from(buf, from))
             .await?;
 
         if matches!(
@@ -361,7 +422,7 @@ mod tests {
         )
         .unwrap();
         let mut b = connect_address(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5127),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5127),
             GeneralTimestampMode::None,
         )
         .unwrap();
@@ -372,8 +433,9 @@ mod tests {
         assert_eq!(&buf[0..3], &[1, 2, 3]);
         assert_eq!(
             recv_result.local_addr,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 1, 1)), 5127)
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5127)
         );
+        assert_ne!(a.local_addr().ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
 
         let a = open_ip(
             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5129),
@@ -393,6 +455,95 @@ mod tests {
         assert_eq!(
             recv_result.local_addr,
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5129)
+        );
+        assert_ne!(a.local_addr().ip(), IpAddr::V6(Ipv6Addr::LOCALHOST));
+    }
+
+    #[tokio::test]
+    async fn test_send_from() {
+        let mut a = open_ip(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 5130),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5130),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        b.send_from(
+            &[1, 2, 3],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .await
+        .unwrap();
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.remote_addr.ip(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+
+        a.send_from_to(
+            &[1, 2, 3],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            dbg!(b.local_addr()),
+        )
+        .await
+        .unwrap();
+        let mut buf = [0; 4];
+        let recv_result = b.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.remote_addr.ip(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_from_v6() {
+        let mut a = open_ip(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5131),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        let mut b = connect_address(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 5131),
+            GeneralTimestampMode::None,
+        )
+        .unwrap();
+        b.send_from(
+            &[1, 2, 3],
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+        )
+        .await
+        .unwrap();
+        let mut buf = [0; 4];
+        let recv_result = a.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.remote_addr.ip(),
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
+        );
+
+        a.send_from_to(
+            &[1, 2, 3],
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+            dbg!(b.local_addr()),
+        )
+        .await
+        .unwrap();
+        let mut buf = [0; 4];
+        let recv_result = b.recv(&mut buf).await.unwrap();
+        assert_eq!(recv_result.bytes_read, 3);
+        assert_eq!(&buf[0..3], &[1, 2, 3]);
+        assert_eq!(
+            recv_result.remote_addr.ip(),
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
         );
     }
 }
