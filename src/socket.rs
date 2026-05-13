@@ -27,6 +27,12 @@ pub use self::linux::*;
 #[cfg(target_os = "macos")]
 use self::macos::*;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
+pub struct FullTimestampData {
+    pub hardware: Option<Timestamp>,
+    pub software: Option<Timestamp>,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Default)]
 pub struct Timestamp {
     pub seconds: i64,
@@ -100,6 +106,7 @@ pub struct RecvResult<A> {
     pub remote_addr: A,
     pub local_addr: A,
     pub timestamp: Option<Timestamp>,
+    pub full_timestamp_data: FullTimestampData,
 }
 
 #[derive(Debug)]
@@ -132,6 +139,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
 
                 let mut timestamp = None;
+                let mut full_timestamp_data = FullTimestampData::default();
                 let mut local_addr = self.local_addr;
 
                 // Loops through the control messages, but we should only get a single message
@@ -141,6 +149,12 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                         ControlMessage::Timestamping { software, hardware } => {
                             tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
                             timestamp = select_timestamp(self.timestamp_mode, software, hardware);
+
+                            // Keep the first timestamp of each kind
+                            full_timestamp_data.software =
+                                full_timestamp_data.software.or(software);
+                            full_timestamp_data.hardware =
+                                full_timestamp_data.hardware.or(hardware);
                         }
 
                         #[cfg(target_os = "linux")]
@@ -175,6 +189,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     remote_addr,
                     local_addr,
                     timestamp,
+                    full_timestamp_data,
                 })
             })
             .await
@@ -182,7 +197,11 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 }
 
 impl<A: NetworkAddress> Socket<A, Open> {
-    pub async fn send_to(&mut self, buf: &[u8], addr: A) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send_to(
+        &mut self,
+        buf: &[u8],
+        addr: A,
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         let addr = addr.to_sockaddr(PrivateToken);
 
         self.socket
@@ -205,7 +224,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
                 unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
             }
         } else {
-            Ok(None)
+            Ok((None, FullTimestampData::default()))
         }
     }
 
@@ -214,7 +233,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
         buf: &[u8],
         from: A,
         to: A,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         let from = from.to_sockaddr(PrivateToken);
         let to = to.to_sockaddr(PrivateToken);
 
@@ -240,7 +259,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
                 unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
             }
         } else {
-            Ok(None)
+            Ok((None, FullTimestampData::default()))
         }
     }
 
@@ -264,7 +283,10 @@ impl<A: NetworkAddress> Socket<A, Connected> {
         A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
     }
 
-    pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send(
+        &mut self,
+        buf: &[u8],
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.send(buf))
             .await?;
@@ -285,11 +307,15 @@ impl<A: NetworkAddress> Socket<A, Connected> {
                 unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
             }
         } else {
-            Ok(None)
+            Ok((None, FullTimestampData::default()))
         }
     }
 
-    pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send_from(
+        &mut self,
+        buf: &[u8],
+        from: A,
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         let from = from.to_sockaddr(PrivateToken);
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.send_from(buf, from))
@@ -311,7 +337,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
                 unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
             }
         } else {
-            Ok(None)
+            Ok((None, FullTimestampData::default()))
         }
     }
 }
