@@ -10,7 +10,7 @@ use crate::{
     interface::{lookup_phc, InterfaceName},
     networkaddress::{sealed::PrivateToken, EthernetAddress, MacAddress, NetworkAddress},
     raw_socket::RawSocket,
-    socket::select_timestamp,
+    socket::{select_timestamp, FullTimestampData},
 };
 
 use super::{InterfaceTimestampMode, Open, Socket, Timestamp};
@@ -21,7 +21,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) async fn fetch_send_timestamp(
         &self,
         expected_counter: u32,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         use std::time::Duration;
 
         const TIMEOUT: Duration = Duration::from_millis(200);
@@ -29,20 +29,20 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         match tokio::time::timeout(TIMEOUT, self.fetch_send_timestamp_loop(expected_counter)).await
         {
             Ok(res_opt_timestamp) => res_opt_timestamp,
-            Err(_timeout_elapsed) => Ok(None),
+            Err(_timeout_elapsed) => Ok((None, FullTimestampData::default())),
         }
     }
 
     pub(super) async fn fetch_send_timestamp_loop(
         &self,
         expected_counter: u32,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
         let try_read = |_: &RawSocket| self.fetch_send_timestamp_try_read(expected_counter);
 
         loop {
             // the timestamp being available triggers the error interest
             match self.socket.async_io(Interest::ERROR, try_read).await? {
-                Some(timestamp) => break Ok(Some(timestamp)),
+                Some((timestamp, timestamp_data)) => break Ok((Some(timestamp), timestamp_data)),
                 None => continue,
             }
         }
@@ -51,7 +51,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) fn fetch_send_timestamp_try_read(
         &self,
         expected_counter: u32,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<Option<(Timestamp, FullTimestampData)>> {
         let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
         // NOTE: this read could block!
@@ -65,7 +65,8 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         for msg in control_messages {
             match msg {
                 ControlMessage::Timestamping { software, hardware } => {
-                    send_ts = select_timestamp(self.timestamp_mode, software, hardware);
+                    send_ts = select_timestamp(self.timestamp_mode, software, hardware)
+                        .map(|v| (v, FullTimestampData { software, hardware }));
                 }
 
                 ControlMessage::ReceiveError(error) => {
@@ -124,6 +125,7 @@ pub(super) fn configure_timestamping(
     let options = match mode {
         InterfaceTimestampMode::HardwareAll | InterfaceTimestampMode::HardwarePTPAll => {
             libc::SOF_TIMESTAMPING_RAW_HARDWARE
+                | libc::SOF_TIMESTAMPING_RX_SOFTWARE
                 | libc::SOF_TIMESTAMPING_TX_SOFTWARE
                 | libc::SOF_TIMESTAMPING_RX_HARDWARE
                 | libc::SOF_TIMESTAMPING_TX_HARDWARE
@@ -135,6 +137,7 @@ pub(super) fn configure_timestamping(
         }
         InterfaceTimestampMode::HardwareRecv | InterfaceTimestampMode::HardwarePTPRecv => {
             libc::SOF_TIMESTAMPING_RAW_HARDWARE
+                | libc::SOF_TIMESTAMPING_RX_SOFTWARE
                 | libc::SOF_TIMESTAMPING_RX_HARDWARE
                 | bind_phc
                     .map(|_| SOF_TIMESTAMPING_BIND_PHC)
@@ -460,7 +463,7 @@ mod tests {
         .unwrap();
 
         let before = SystemTime::now();
-        let send_ts = b.send(&[1, 2, 3]).await.unwrap().unwrap();
+        let send_ts = b.send(&[1, 2, 3]).await.unwrap().0.unwrap();
         let after = SystemTime::now();
 
         let mut buf = [0; 4];
