@@ -355,6 +355,7 @@ impl<A: MulticastJoinable, S> Socket<A, S> {
 pub fn open_ip(
     addr: SocketAddr,
     timestamping: GeneralTimestampMode,
+    #[cfg_attr(not(target_os = "linux"), expect(unused))] reuse_addr: bool,
 ) -> std::io::Result<Socket<SocketAddr, Open>> {
     // Setup the socket
     let socket = match addr {
@@ -364,6 +365,10 @@ pub fn open_ip(
     match addr {
         SocketAddr::V4(_) => socket.enable_destination_ipv4()?,
         SocketAddr::V6(_) => socket.enable_destination_ipv6()?,
+    }
+    #[cfg(target_os = "linux")]
+    if reuse_addr {
+        socket.reuse_addr()?;
     }
     socket.bind(addr.to_sockaddr(PrivateToken))?;
     socket.set_nonblocking(true)?;
@@ -422,6 +427,7 @@ mod tests {
         let mut a = open_ip(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5125),
             GeneralTimestampMode::None,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
@@ -445,6 +451,7 @@ mod tests {
         let a = open_ip(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 5127),
             GeneralTimestampMode::None,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
@@ -466,6 +473,7 @@ mod tests {
         let a = open_ip(
             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5129),
             GeneralTimestampMode::None,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
@@ -490,6 +498,7 @@ mod tests {
         let mut a = open_ip(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 5130),
             GeneralTimestampMode::None,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
@@ -534,6 +543,7 @@ mod tests {
         let mut a = open_ip(
             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5131),
             GeneralTimestampMode::None,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
