@@ -388,6 +388,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_open_ip_reuse_addr_after_interface() {
+        use std::str::FromStr;
+        let _a = open_interface_udp(
+            InterfaceName::from_str("lo").unwrap(),
+            5132,
+            super::InterfaceTimestampMode::None,
+            None,
+        )
+        .unwrap();
+        let _b = open_ip(
+            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 5132),
+            GeneralTimestampMode::None,
+            true,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_open_ip_reuse_addr_before_interface() {
+        use std::str::FromStr;
+        let _a = open_ip(
+            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 5133),
+            GeneralTimestampMode::None,
+            true,
+        )
+        .unwrap();
+        let _b = open_interface_udp(
+            InterfaceName::from_str("lo").unwrap(),
+            5133,
+            super::InterfaceTimestampMode::None,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn test_open_udp6() {
         use std::str::FromStr;
         let mut a = open_interface_udp6(
@@ -454,6 +490,7 @@ mod tests {
         let a = open_ip(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5126),
             GeneralTimestampMode::SoftwareAll,
+            false,
         )
         .unwrap();
         let mut b = connect_address(
