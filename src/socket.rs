@@ -129,69 +129,91 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         self.local_addr
     }
 
-    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
-        self.socket
-            .async_io(Interest::READABLE, |socket| {
-                let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
+    fn inner_recv(&self, buf: &mut [u8], socket: &RawSocket) -> std::io::Result<RecvResult<A>> {
+        let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
-                // loops for when we receive an interrupt during the recv
-                let (bytes_read, control_messages, remote_address) =
-                    socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
+        // loops for when we receive an interrupt during the recv
+        let (bytes_read, control_messages, remote_address) =
+            socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
 
-                let mut timestamp = None;
-                let mut full_timestamp_data = FullTimestampData::default();
-                let mut local_addr = self.local_addr;
+        let mut timestamp = None;
+        let mut full_timestamp_data = FullTimestampData::default();
+        let mut local_addr = self.local_addr;
 
-                // Loops through the control messages, but we should only get a single message
-                // in practice
-                for msg in control_messages {
-                    match msg {
-                        ControlMessage::Timestamping { software, hardware } => {
-                            tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
-                            timestamp = select_timestamp(self.timestamp_mode, software, hardware);
+        // Loops through the control messages, but we should only get a single message
+        // in practice
+        for msg in control_messages {
+            match msg {
+                ControlMessage::Timestamping { software, hardware } => {
+                    tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
+                    timestamp = select_timestamp(self.timestamp_mode, software, hardware);
 
-                            // Keep the first timestamp of each kind
-                            full_timestamp_data.software =
-                                full_timestamp_data.software.or(software);
-                            full_timestamp_data.hardware =
-                                full_timestamp_data.hardware.or(hardware);
-                        }
+                    // Keep the first timestamp of each kind
+                    full_timestamp_data.software = full_timestamp_data.software.or(software);
+                    full_timestamp_data.hardware = full_timestamp_data.hardware.or(hardware);
+                }
 
-                        #[cfg(target_os = "linux")]
-                        ControlMessage::ReceiveError(error) => {
-                            tracing::debug!(
-                                "unexpected error control message on receive: {}",
-                                error.ee_errno
-                            );
-                        }
+                #[cfg(target_os = "linux")]
+                ControlMessage::ReceiveError(error) => {
+                    tracing::debug!(
+                        "unexpected error control message on receive: {}",
+                        error.ee_errno
+                    );
+                }
 
-                        ControlMessage::DestinationIp(addr) => {
-                            if let Some(addr) = A::from_ip_and_port(addr, self.local_addr.port()) {
-                                local_addr = addr;
-                            }
-                        }
-
-                        ControlMessage::Other(msg) => {
-                            tracing::debug!(
-                                "unexpected control message on receive: {} {}",
-                                msg.cmsg_level,
-                                msg.cmsg_type,
-                            );
-                        }
+                ControlMessage::DestinationIp(addr) => {
+                    if let Some(addr) = A::from_ip_and_port(addr, self.local_addr.port()) {
+                        local_addr = addr;
                     }
                 }
 
-                let remote_addr = A::from_sockaddr(remote_address, PrivateToken)
-                    .ok_or(std::io::ErrorKind::Other)?;
+                ControlMessage::Other(msg) => {
+                    tracing::debug!(
+                        "unexpected control message on receive: {} {}",
+                        msg.cmsg_level,
+                        msg.cmsg_type,
+                    );
+                }
+            }
+        }
 
-                Ok(RecvResult {
-                    bytes_read,
-                    remote_addr,
-                    local_addr,
-                    timestamp,
-                    full_timestamp_data,
-                })
-            })
+        let remote_addr =
+            A::from_sockaddr(remote_address, PrivateToken).ok_or(std::io::ErrorKind::Other)?;
+
+        Ok(RecvResult {
+            bytes_read,
+            remote_addr,
+            local_addr,
+            timestamp,
+            full_timestamp_data,
+        })
+    }
+
+    /// Poll to receive a packet on the socket.
+    ///
+    /// Note that on multiple calls to [`poll_recv`](Socket::poll_recv), only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_recv(
+        &self,
+        buf: &mut [u8],
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<RecvResult<A>>> {
+        match self.socket.poll_read_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => {
+                match guard.try_io(|inner| self.inner_recv(buf, inner.get_ref())) {
+                    Ok(result) => std::task::Poll::Ready(result),
+                    Err(_) => std::task::Poll::Pending,
+                }
+            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
+        self.socket
+            .async_io(Interest::READABLE, |socket| self.inner_recv(buf, socket))
             .await
     }
 }
