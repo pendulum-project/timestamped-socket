@@ -1,6 +1,7 @@
 use std::{
     marker::PhantomData,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
 };
 
 use tokio::io::{unix::AsyncFd, Interest};
@@ -10,85 +11,53 @@ use crate::{
     interface::{lookup_phc, InterfaceName},
     networkaddress::{sealed::PrivateToken, EthernetAddress, MacAddress, NetworkAddress},
     raw_socket::RawSocket,
-    socket::{select_timestamp, FullTimestampData},
+    socket::FullTimestampData,
 };
 
-use super::{InterfaceTimestampMode, Open, Socket, Timestamp};
+use super::{InterfaceTimestampMode, Open, Socket};
 
 const SOF_TIMESTAMPING_BIND_PHC: libc::c_uint = 1 << 15;
 
 impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) async fn fetch_send_timestamp(
-        &self,
-        expected_counter: u32,
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
-        use std::time::Duration;
-
-        const TIMEOUT: Duration = Duration::from_millis(200);
-
-        match tokio::time::timeout(TIMEOUT, self.fetch_send_timestamp_loop(expected_counter)).await
-        {
-            Ok(res_opt_timestamp) => res_opt_timestamp,
-            Err(_timeout_elapsed) => Ok((None, FullTimestampData::default())),
-        }
-    }
-
-    pub(super) async fn fetch_send_timestamp_loop(
-        &self,
-        expected_counter: u32,
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
-        let try_read = |_: &RawSocket| self.fetch_send_timestamp_try_read(expected_counter);
+        socket: Arc<AsyncFd<RawSocket>>,
+    ) -> std::io::Result<(u32, FullTimestampData)> {
+        let try_read = |socket: &RawSocket| Self::fetch_send_timestamp_try_read(socket);
 
         loop {
             // the timestamp being available triggers the error interest
-            match self.socket.async_io(Interest::ERROR, try_read).await? {
-                Some((timestamp, timestamp_data)) => break Ok((Some(timestamp), timestamp_data)),
+            match socket.async_io(Interest::ERROR, try_read).await? {
+                Some((counter, timestamp_data)) => break Ok((counter, timestamp_data)),
                 None => continue,
             }
         }
     }
 
     pub(super) fn fetch_send_timestamp_try_read(
-        &self,
-        expected_counter: u32,
-    ) -> std::io::Result<Option<(Timestamp, FullTimestampData)>> {
+        socket: &RawSocket,
+    ) -> std::io::Result<Option<(u32, FullTimestampData)>> {
         let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
         // NOTE: this read could block!
-        let (_, control_messages, _) = self.socket.get_ref().receive_message(
-            &mut [],
-            &mut control_buf,
-            MessageQueue::Error,
-        )?;
+        let (_, control_messages, _) =
+            socket.receive_message(&mut [], &mut control_buf, MessageQueue::Error)?;
 
         let mut send_ts = None;
+        let mut counter = None;
         for msg in control_messages {
             match msg {
                 ControlMessage::Timestamping { software, hardware } => {
-                    send_ts = select_timestamp(self.timestamp_mode, software, hardware)
-                        .map(|v| (v, FullTimestampData { software, hardware }));
+                    send_ts = Some(FullTimestampData { software, hardware });
                 }
 
                 ControlMessage::ReceiveError(error) => {
                     // the timestamping does not set a message; if there is a message, that means
                     // something else is wrong, and we want to know about it.
                     if error.ee_errno as libc::c_int != libc::ENOMSG {
-                        tracing::debug!(
-                            expected_counter,
-                            error.ee_data,
-                            "error message on the MSG_ERRQUEUE"
-                        );
+                        tracing::debug!(error.ee_data, "error message on the MSG_ERRQUEUE");
                     }
 
-                    // Check that this message belongs to the send we are interested in
-                    if error.ee_data != expected_counter {
-                        tracing::debug!(
-                            error.ee_data,
-                            expected_counter,
-                            "Timestamp for unrelated packet"
-                        );
-                        return Ok(None);
-                    }
+                    counter = Some(error.ee_data);
                 }
 
                 ControlMessage::DestinationIp(_) => {
@@ -105,7 +74,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
             }
         }
 
-        Ok(send_ts)
+        Ok(counter.zip(send_ts))
     }
 }
 
@@ -196,8 +165,8 @@ pub fn open_interface_udp(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
-        send_counter: 0,
+        socket: Arc::new(AsyncFd::new(socket)?),
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
@@ -238,8 +207,8 @@ pub fn open_interface_udp4(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
-        send_counter: 0,
+        socket: Arc::new(AsyncFd::new(socket)?),
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
@@ -281,8 +250,8 @@ pub fn open_interface_udp6(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
-        send_counter: 0,
+        socket: Arc::new(AsyncFd::new(socket)?),
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
@@ -330,8 +299,8 @@ pub fn open_interface_ethernet(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
-        send_counter: 0,
+        socket: Arc::new(AsyncFd::new(socket)?),
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
@@ -500,7 +469,7 @@ mod tests {
         .unwrap();
 
         let before = SystemTime::now();
-        let send_ts = b.send(&[1, 2, 3]).await.unwrap().0.unwrap();
+        let send_ts = b.send(&[1, 2, 3]).await.unwrap().unwrap();
         let after = SystemTime::now();
 
         let mut buf = [0; 4];

@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd};
+use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd, sync::Arc};
 
 use tokio::io::{unix::AsyncFd, Interest};
 
@@ -88,14 +88,13 @@ impl From<GeneralTimestampMode> for InterfaceTimestampMode {
 
 fn select_timestamp(
     mode: InterfaceTimestampMode,
-    software: Option<Timestamp>,
-    hardware: Option<Timestamp>,
+    timestamp_data: FullTimestampData,
 ) -> Option<Timestamp> {
     use InterfaceTimestampMode::*;
 
     match mode {
-        SoftwareAll | SoftwareRecv => software,
-        HardwareAll | HardwareRecv | HardwarePTPAll | HardwarePTPRecv => hardware,
+        SoftwareAll | SoftwareRecv => timestamp_data.software,
+        HardwareAll | HardwareRecv | HardwarePTPAll | HardwarePTPRecv => timestamp_data.hardware,
         None => Option::None,
     }
 }
@@ -112,9 +111,10 @@ pub struct RecvResult<A> {
 #[derive(Debug)]
 pub struct Socket<A, S> {
     timestamp_mode: InterfaceTimestampMode,
-    socket: AsyncFd<RawSocket>,
+    // FIXME: Remove the arc once tokio also allows polling asyncfds for the Error interest
+    socket: Arc<AsyncFd<RawSocket>>,
     #[cfg(target_os = "linux")]
-    send_counter: u32,
+    send_counter: std::sync::Mutex<u32>,
     local_addr: A,
     _state: PhantomData<S>,
 }
@@ -124,99 +124,117 @@ pub struct Open;
 #[non_exhaustive]
 pub struct Connected;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SendTimestampToken(u32);
+
 impl<A: NetworkAddress, S> Socket<A, S> {
     pub fn local_addr(&self) -> A {
         self.local_addr
     }
 
-    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
-        self.socket
-            .async_io(Interest::READABLE, |socket| {
-                let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
+    fn inner_recv(&self, buf: &mut [u8], socket: &RawSocket) -> std::io::Result<RecvResult<A>> {
+        let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
-                // loops for when we receive an interrupt during the recv
-                let (bytes_read, control_messages, remote_address) =
-                    socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
+        // loops for when we receive an interrupt during the recv
+        let (bytes_read, control_messages, remote_address) =
+            socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
 
-                let mut timestamp = None;
-                let mut full_timestamp_data = FullTimestampData::default();
-                let mut local_addr = self.local_addr;
+        let mut full_timestamp_data = FullTimestampData::default();
+        let mut local_addr = self.local_addr;
 
-                // Loops through the control messages, but we should only get a single message
-                // in practice
-                for msg in control_messages {
-                    match msg {
-                        ControlMessage::Timestamping { software, hardware } => {
-                            tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
-                            timestamp = select_timestamp(self.timestamp_mode, software, hardware);
+        // Loops through the control messages, but we should only get a single message
+        // in practice
+        for msg in control_messages {
+            match msg {
+                ControlMessage::Timestamping { software, hardware } => {
+                    tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
 
-                            // Keep the first timestamp of each kind
-                            full_timestamp_data.software =
-                                full_timestamp_data.software.or(software);
-                            full_timestamp_data.hardware =
-                                full_timestamp_data.hardware.or(hardware);
-                        }
+                    // Keep the first timestamp of each kind
+                    full_timestamp_data.software = full_timestamp_data.software.or(software);
+                    full_timestamp_data.hardware = full_timestamp_data.hardware.or(hardware);
+                }
 
-                        #[cfg(target_os = "linux")]
-                        ControlMessage::ReceiveError(error) => {
-                            tracing::debug!(
-                                "unexpected error control message on receive: {}",
-                                error.ee_errno
-                            );
-                        }
+                #[cfg(target_os = "linux")]
+                ControlMessage::ReceiveError(error) => {
+                    tracing::debug!(
+                        "unexpected error control message on receive: {}",
+                        error.ee_errno
+                    );
+                }
 
-                        ControlMessage::DestinationIp(addr) => {
-                            if let Some(addr) = A::from_ip_and_port(addr, self.local_addr.port()) {
-                                local_addr = addr;
-                            }
-                        }
-
-                        ControlMessage::Other(msg) => {
-                            tracing::debug!(
-                                "unexpected control message on receive: {} {}",
-                                msg.cmsg_level,
-                                msg.cmsg_type,
-                            );
-                        }
+                ControlMessage::DestinationIp(addr) => {
+                    if let Some(addr) = A::from_ip_and_port(addr, self.local_addr.port()) {
+                        local_addr = addr;
                     }
                 }
 
-                let remote_addr = A::from_sockaddr(remote_address, PrivateToken)
-                    .ok_or(std::io::ErrorKind::Other)?;
+                ControlMessage::Other(msg) => {
+                    tracing::debug!(
+                        "unexpected control message on receive: {} {}",
+                        msg.cmsg_level,
+                        msg.cmsg_type,
+                    );
+                }
+            }
+        }
 
-                Ok(RecvResult {
-                    bytes_read,
-                    remote_addr,
-                    local_addr,
-                    timestamp,
-                    full_timestamp_data,
-                })
-            })
+        let remote_addr =
+            A::from_sockaddr(remote_address, PrivateToken).ok_or(std::io::ErrorKind::Other)?;
+
+        let timestamp = select_timestamp(self.timestamp_mode, full_timestamp_data);
+
+        Ok(RecvResult {
+            bytes_read,
+            remote_addr,
+            local_addr,
+            timestamp,
+            full_timestamp_data,
+        })
+    }
+
+    /// Poll to receive a packet on the socket.
+    ///
+    /// Note that on multiple calls to [`poll_recv`](Socket::poll_recv), only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_recv(
+        &self,
+        buf: &mut [u8],
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<RecvResult<A>>> {
+        match self.socket.poll_read_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => {
+                match guard.try_io(|inner| self.inner_recv(buf, inner.get_ref())) {
+                    Ok(result) => std::task::Poll::Ready(result),
+                    Err(_) => std::task::Poll::Pending,
+                }
+            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<RecvResult<A>> {
+        self.socket
+            .async_io(Interest::READABLE, |socket| self.inner_recv(buf, socket))
             .await
     }
-}
 
-impl<A: NetworkAddress> Socket<A, Open> {
-    pub async fn send_to(
-        &mut self,
-        buf: &[u8],
-        addr: A,
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
-        let addr = addr.to_sockaddr(PrivateToken);
-
-        self.socket
-            .async_io(Interest::WRITABLE, |socket| socket.send_to(buf, addr))
-            .await?;
-
+    fn send_inner(
+        &self,
+        send_call: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<Option<SendTimestampToken>> {
         if matches!(
             self.timestamp_mode,
             InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
         ) {
             #[cfg(target_os = "linux")]
             {
-                let expected_counter = self.send_counter;
-                self.send_counter = self.send_counter.wrapping_add(1);
-                self.fetch_send_timestamp(expected_counter).await
+                let mut counter = self.send_counter.lock().unwrap();
+                send_call()?;
+                let token = SendTimestampToken(*counter);
+                *counter = counter.wrapping_add(1);
+                Ok(Some(token))
             }
 
             #[cfg(not(target_os = "linux"))]
@@ -224,42 +242,159 @@ impl<A: NetworkAddress> Socket<A, Open> {
                 unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
             }
         } else {
-            Ok((None, FullTimestampData::default()))
+            send_call()?;
+            Ok(None)
         }
     }
 
+    /// Wait for the next send timestamp to be returned.
+    ///
+    /// Note: There is no poll variant for this function, as that is currently
+    /// impossible to implement with the tools tokio provides. To compensate,
+    /// the future returned here is independent of the self reference and can
+    /// be stored to simulate the existence of a poll function.
+    pub fn get_send_timestamp(
+        &self,
+    ) -> impl std::future::Future<Output = std::io::Result<(SendTimestampToken, FullTimestampData)>>
+           + Send
+           + Sync
+           + 'static {
+        let timestamp_mode = self.timestamp_mode;
+        let socket = self.socket.clone();
+        async move {
+            if matches!(
+                timestamp_mode,
+                InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
+            ) {
+                #[cfg(target_os = "linux")]
+                {
+                    let (counter, timestamp) = Self::fetch_send_timestamp(socket).await?;
+                    Ok((SendTimestampToken(counter), timestamp))
+                }
+
+                #[cfg(not(target_os = "linux"))]
+                {
+                    unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
+                }
+            } else {
+                Err(std::io::ErrorKind::Unsupported.into())
+            }
+        }
+    }
+
+    // This potentially drops multiple timestamps. Therefore, it isn't really supposed to be used
+    // in a context where multiple places are sharing the socket.
+    async fn send_timestamp_for_transmit(
+        &mut self,
+        token: SendTimestampToken,
+    ) -> std::io::Result<Option<Timestamp>> {
+        use std::time::Duration;
+
+        const TIMEOUT: Duration = Duration::from_millis(200);
+
+        tokio::time::timeout(TIMEOUT, async {
+            loop {
+                let (cur_token, timestamp_data) = self.get_send_timestamp().await?;
+                if cur_token == token {
+                    return Ok(select_timestamp(self.timestamp_mode, timestamp_data));
+                }
+            }
+        })
+        .await
+        .unwrap_or(Ok(None))
+    }
+}
+
+impl<A: NetworkAddress> Socket<A, Open> {
+    /// Send a packet to a given receiver on the socket.
+    ///
+    /// Note that on multiple calls to `poll_send_*`, only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_send_to(
+        &self,
+        buf: &[u8],
+        addr: A,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<Option<SendTimestampToken>>> {
+        let addr = addr.to_sockaddr(PrivateToken);
+
+        match self.socket.poll_write_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => {
+                match guard.try_io(|inner| self.send_inner(|| inner.get_ref().send_to(buf, addr))) {
+                    Ok(result) => std::task::Poll::Ready(result),
+                    Err(_) => std::task::Poll::Pending,
+                }
+            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    /// Send a packet to a given receiver on the socket.
+    pub async fn send_to(&mut self, buf: &[u8], addr: A) -> std::io::Result<Option<Timestamp>> {
+        let addr = addr.to_sockaddr(PrivateToken);
+
+        if let Some(token) = self
+            .socket
+            .async_io(Interest::WRITABLE, |socket| {
+                self.send_inner(|| socket.send_to(buf, addr))
+            })
+            .await?
+        {
+            self.send_timestamp_for_transmit(token).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Send a packet to a given receiver on the socket, using the specified origin address.
+    ///
+    /// Note that on multiple calls to `poll_send_*`, only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_send_from_to(
+        &self,
+        buf: &[u8],
+        from: A,
+        to: A,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<Option<SendTimestampToken>>> {
+        let from = from.to_sockaddr(PrivateToken);
+        let to = to.to_sockaddr(PrivateToken);
+
+        match self.socket.poll_write_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => match guard
+                .try_io(|inner| self.send_inner(|| inner.get_ref().send_from_to(buf, from, to)))
+            {
+                Ok(result) => std::task::Poll::Ready(result),
+                Err(_) => std::task::Poll::Pending,
+            },
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+
+    /// Send a packet to a given receiver on the socket, using the specified origin address.
     pub async fn send_from_to(
         &mut self,
         buf: &[u8],
         from: A,
         to: A,
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
+    ) -> std::io::Result<Option<Timestamp>> {
         let from = from.to_sockaddr(PrivateToken);
         let to = to.to_sockaddr(PrivateToken);
 
-        self.socket
+        if let Some(token) = self
+            .socket
             .async_io(Interest::WRITABLE, |socket| {
-                socket.send_from_to(buf, from, to)
+                self.send_inner(|| socket.send_from_to(buf, from, to))
             })
-            .await?;
-
-        if matches!(
-            self.timestamp_mode,
-            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-        ) {
-            #[cfg(target_os = "linux")]
-            {
-                let expected_counter = self.send_counter;
-                self.send_counter = self.send_counter.wrapping_add(1);
-                self.fetch_send_timestamp(expected_counter).await
-            }
-
-            #[cfg(not(target_os = "linux"))]
-            {
-                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
-            }
+            .await?
+        {
+            self.send_timestamp_for_transmit(token).await
         } else {
-            Ok((None, FullTimestampData::default()))
+            Ok(None)
         }
     }
 
@@ -283,61 +418,81 @@ impl<A: NetworkAddress> Socket<A, Connected> {
         A::from_sockaddr(addr, PrivateToken).ok_or_else(|| std::io::ErrorKind::Other.into())
     }
 
-    pub async fn send(
-        &mut self,
+    /// Send a packet on the socket.
+    ///
+    /// Note that on multiple calls to `poll_send_*`, only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_send(
+        &self,
         buf: &[u8],
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
-        self.socket
-            .async_io(Interest::WRITABLE, |socket| socket.send(buf))
-            .await?;
-
-        if matches!(
-            self.timestamp_mode,
-            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-        ) {
-            #[cfg(target_os = "linux")]
-            {
-                let expected_counter = self.send_counter;
-                self.send_counter = self.send_counter.wrapping_add(1);
-                self.fetch_send_timestamp(expected_counter).await
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<Option<SendTimestampToken>>> {
+        match self.socket.poll_write_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => {
+                match guard.try_io(|inner| self.send_inner(|| inner.get_ref().send(buf))) {
+                    Ok(result) => std::task::Poll::Ready(result),
+                    Err(_) => std::task::Poll::Pending,
+                }
             }
-
-            #[cfg(not(target_os = "linux"))]
-            {
-                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
-            }
-        } else {
-            Ok((None, FullTimestampData::default()))
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
 
-    pub async fn send_from(
-        &mut self,
+    /// Send a packet on the socket.
+    pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
+        if let Some(token) = self
+            .socket
+            .async_io(Interest::WRITABLE, |socket| {
+                self.send_inner(|| socket.send(buf))
+            })
+            .await?
+        {
+            self.send_timestamp_for_transmit(token).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Send a packet on the socket.
+    ///
+    /// Note that on multiple calls to `poll_send_*`, only
+    /// the [`Waker`](std::task::Waker) from the [`Context`](std::task::Context)
+    /// on the most recent call is scheduled to receive a wakeup.
+    pub fn poll_send_from(
+        &self,
         buf: &[u8],
         from: A,
-    ) -> std::io::Result<(Option<Timestamp>, FullTimestampData)> {
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<Option<SendTimestampToken>>> {
         let from = from.to_sockaddr(PrivateToken);
-        self.socket
-            .async_io(Interest::WRITABLE, |socket| socket.send_from(buf, from))
-            .await?;
 
-        if matches!(
-            self.timestamp_mode,
-            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-        ) {
-            #[cfg(target_os = "linux")]
+        match self.socket.poll_write_ready(cx) {
+            std::task::Poll::Ready(Ok(mut guard)) => match guard
+                .try_io(|inner| self.send_inner(|| inner.get_ref().send_from(buf, from)))
             {
-                let expected_counter = self.send_counter;
-                self.send_counter = self.send_counter.wrapping_add(1);
-                self.fetch_send_timestamp(expected_counter).await
-            }
+                Ok(result) => std::task::Poll::Ready(result),
+                Err(_) => std::task::Poll::Pending,
+            },
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
 
-            #[cfg(not(target_os = "linux"))]
-            {
-                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
-            }
+    pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<Option<Timestamp>> {
+        let from = from.to_sockaddr(PrivateToken);
+
+        if let Some(token) = self
+            .socket
+            .async_io(Interest::WRITABLE, |socket| {
+                self.send_inner(|| socket.send_from(buf, from))
+            })
+            .await?
+        {
+            self.send_timestamp_for_transmit(token).await
         } else {
-            Ok((None, FullTimestampData::default()))
+            Ok(None)
         }
     }
 }
@@ -379,9 +534,9 @@ pub fn open_ip(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         #[cfg(target_os = "linux")]
-        send_counter: 0,
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
@@ -409,9 +564,9 @@ pub fn connect_address(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         #[cfg(target_os = "linux")]
-        send_counter: 0,
+        send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
     })
