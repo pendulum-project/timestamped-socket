@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd};
+use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd, sync::Arc};
 
 use tokio::io::{unix::AsyncFd, Interest};
 
@@ -111,7 +111,8 @@ pub struct RecvResult<A> {
 #[derive(Debug)]
 pub struct Socket<A, S> {
     timestamp_mode: InterfaceTimestampMode,
-    socket: AsyncFd<RawSocket>,
+    // FIXME: Remove the arc once tokio also allows polling asyncfds for the Error interest
+    socket: Arc<AsyncFd<RawSocket>>,
     #[cfg(target_os = "linux")]
     send_counter: std::sync::Mutex<u32>,
     local_addr: A,
@@ -246,25 +247,38 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         }
     }
 
-    pub async fn get_send_timestamp(
+    /// Wait for the next send timestamp to be returned.
+    ///
+    /// Note: There is no poll variant for this function, as that is currently
+    /// impossible to implement with the tools tokio provides. To compensate,
+    /// the future returned here is independent of the self reference and can
+    /// be stored to simulate the existence of a poll function.
+    pub fn get_send_timestamp(
         &self,
-    ) -> std::io::Result<(SendTimestampToken, FullTimestampData)> {
-        if matches!(
-            self.timestamp_mode,
-            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-        ) {
-            #[cfg(target_os = "linux")]
-            {
-                let (counter, timestamp) = self.fetch_send_timestamp().await?;
-                Ok((SendTimestampToken(counter), timestamp))
-            }
+    ) -> impl std::future::Future<Output = std::io::Result<(SendTimestampToken, FullTimestampData)>>
+           + Send
+           + Sync
+           + 'static {
+        let timestamp_mode = self.timestamp_mode;
+        let socket = self.socket.clone();
+        async move {
+            if matches!(
+                timestamp_mode,
+                InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
+            ) {
+                #[cfg(target_os = "linux")]
+                {
+                    let (counter, timestamp) = Self::fetch_send_timestamp(socket).await?;
+                    Ok((SendTimestampToken(counter), timestamp))
+                }
 
-            #[cfg(not(target_os = "linux"))]
-            {
-                unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
+                #[cfg(not(target_os = "linux"))]
+                {
+                    unreachable!("Should not be able to create send timestamping sockets on platforms other than linux")
+                }
+            } else {
+                Err(std::io::ErrorKind::Unsupported.into())
             }
-        } else {
-            Err(std::io::ErrorKind::Unsupported.into())
         }
     }
 
@@ -520,7 +534,7 @@ pub fn open_ip(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,
@@ -550,7 +564,7 @@ pub fn connect_address(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,
