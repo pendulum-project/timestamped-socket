@@ -1,6 +1,7 @@
 use std::{
     marker::PhantomData,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
 };
 
 use tokio::io::{unix::AsyncFd, Interest};
@@ -18,12 +19,14 @@ use super::{InterfaceTimestampMode, Open, Socket};
 const SOF_TIMESTAMPING_BIND_PHC: libc::c_uint = 1 << 15;
 
 impl<A: NetworkAddress, S> Socket<A, S> {
-    pub(super) async fn fetch_send_timestamp(&self) -> std::io::Result<(u32, FullTimestampData)> {
-        let try_read = |_: &RawSocket| self.fetch_send_timestamp_try_read();
+    pub(super) async fn fetch_send_timestamp(
+        socket: Arc<AsyncFd<RawSocket>>,
+    ) -> std::io::Result<(u32, FullTimestampData)> {
+        let try_read = |socket: &RawSocket| Self::fetch_send_timestamp_try_read(socket);
 
         loop {
             // the timestamp being available triggers the error interest
-            match self.socket.async_io(Interest::ERROR, try_read).await? {
+            match socket.async_io(Interest::ERROR, try_read).await? {
                 Some((counter, timestamp_data)) => break Ok((counter, timestamp_data)),
                 None => continue,
             }
@@ -31,16 +34,13 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     }
 
     pub(super) fn fetch_send_timestamp_try_read(
-        &self,
+        socket: &RawSocket,
     ) -> std::io::Result<Option<(u32, FullTimestampData)>> {
         let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
         // NOTE: this read could block!
-        let (_, control_messages, _) = self.socket.get_ref().receive_message(
-            &mut [],
-            &mut control_buf,
-            MessageQueue::Error,
-        )?;
+        let (_, control_messages, _) =
+            socket.receive_message(&mut [], &mut control_buf, MessageQueue::Error)?;
 
         let mut send_ts = None;
         let mut counter = None;
@@ -165,7 +165,7 @@ pub fn open_interface_udp(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -207,7 +207,7 @@ pub fn open_interface_udp4(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -250,7 +250,7 @@ pub fn open_interface_udp6(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -299,7 +299,7 @@ pub fn open_interface_ethernet(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: AsyncFd::new(socket)?,
+        socket: Arc::new(AsyncFd::new(socket)?),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
