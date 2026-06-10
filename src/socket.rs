@@ -1,4 +1,9 @@
-use std::{marker::PhantomData, net::SocketAddr, os::fd::AsRawFd, sync::Arc};
+use std::{
+    marker::PhantomData,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    os::fd::AsRawFd,
+    sync::Arc,
+};
 
 use tokio::io::{unix::AsyncFd, Interest};
 
@@ -531,6 +536,65 @@ pub fn open_ip(
     configure_timestamping(&socket, None, timestamping.into(), None)?;
 
     let local_addr = SocketAddr::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
+    Ok(Socket {
+        timestamp_mode: timestamping.into(),
+        socket: Arc::new(AsyncFd::new(socket)?),
+        #[cfg(target_os = "linux")]
+        send_counter: std::sync::Mutex::new(0),
+        local_addr,
+        _state: PhantomData,
+    })
+}
+
+pub fn open_ipv4(
+    addr: SocketAddrV4,
+    timestamping: GeneralTimestampMode,
+    #[cfg_attr(not(target_os = "linux"), expect(unused))] reuse_addr: bool,
+) -> std::io::Result<Socket<SocketAddrV4, Open>> {
+    // Setup the socket
+    let socket = RawSocket::open(libc::PF_INET, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
+    socket.enable_destination_ipv4()?;
+    #[cfg(target_os = "linux")]
+    if reuse_addr {
+        socket.reuse_addr()?;
+    }
+    socket.bind(addr.to_sockaddr(PrivateToken))?;
+    socket.set_nonblocking(true)?;
+    configure_timestamping(&socket, None, timestamping.into(), None)?;
+
+    let local_addr = SocketAddrV4::from_sockaddr(socket.getsockname()?, PrivateToken)
+        .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
+
+    Ok(Socket {
+        timestamp_mode: timestamping.into(),
+        socket: Arc::new(AsyncFd::new(socket)?),
+        #[cfg(target_os = "linux")]
+        send_counter: std::sync::Mutex::new(0),
+        local_addr,
+        _state: PhantomData,
+    })
+}
+
+pub fn open_ipv6(
+    addr: SocketAddrV6,
+    timestamping: GeneralTimestampMode,
+    #[cfg_attr(not(target_os = "linux"), expect(unused))] reuse_addr: bool,
+) -> std::io::Result<Socket<SocketAddrV6, Open>> {
+    // Setup the socket
+    let socket = RawSocket::open(libc::PF_INET6, libc::SOCK_DGRAM, libc::IPPROTO_UDP)?;
+    socket.ipv6_only()?;
+    socket.enable_destination_ipv6()?;
+    #[cfg(target_os = "linux")]
+    if reuse_addr {
+        socket.reuse_addr()?;
+    }
+    socket.bind(addr.to_sockaddr(PrivateToken))?;
+    socket.set_nonblocking(true)?;
+    configure_timestamping(&socket, None, timestamping.into(), None)?;
+
+    let local_addr = SocketAddrV6::from_sockaddr(socket.getsockname()?, PrivateToken)
         .ok_or::<std::io::Error>(std::io::ErrorKind::Other.into())?;
 
     Ok(Socket {
