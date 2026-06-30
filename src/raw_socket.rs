@@ -10,7 +10,8 @@ use libc::{c_void, in6_addr, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_stora
 use crate::{
     cerr,
     control_message::{
-        empty_msghdr, zeroed_sockaddr_storage, ControlMessage, ControlMessageIterator, MessageQueue,
+        empty_cmsghdr, empty_msghdr, zeroed_sockaddr_storage, ControlMessage,
+        ControlMessageIterator, MessageQueue,
     },
 };
 
@@ -395,11 +396,11 @@ fn control_message<T>(level: libc::c_int, type_: libc::c_int, content: T) -> Vec
 
     // Safety:
     // libc::CMSG_LEN is always safe to call.
-    let header = libc::cmsghdr {
-        cmsg_len: unsafe { libc::CMSG_LEN(size_of::<T>() as _) } as _,
-        cmsg_level: level,
-        cmsg_type: type_,
-    };
+    let mut header = empty_cmsghdr();
+    header.cmsg_len = unsafe { libc::CMSG_LEN(size_of::<T>() as _) } as _;
+    header.cmsg_level = level;
+    header.cmsg_type = type_;
+
     // Safety:
     // libc::CMSG_SPACE ensures we have sufficient space for the control message header.
     unsafe { write_unaligned(control_message.as_mut_ptr() as *mut libc::cmsghdr, header) };
