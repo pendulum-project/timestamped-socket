@@ -282,3 +282,15 @@ pub(crate) fn empty_msghdr() -> libc::msghdr {
     // value
     unsafe { std::mem::MaybeUninit::<libc::msghdr>::zeroed().assume_init() }
 }
+
+pub(crate) fn empty_cmsghdr() -> libc::cmsghdr {
+    // On `target_env = "musl"`, there are several private padding fields.
+    // the position of these padding fields depends on the system endianness,
+    // so keeping making them public does not really help.
+    //
+    // Safety:
+    //
+    // all fields are either integer or pointer types. For those types, 0 is a valid
+    // value
+    unsafe { std::mem::MaybeUninit::<libc::cmsghdr>::zeroed().assume_init() }
+}
