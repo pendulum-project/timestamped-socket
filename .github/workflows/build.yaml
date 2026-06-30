@@ -37,18 +37,23 @@ jobs:
           args: --all --check
 
   build:
-    name: Clippy & Test ${{ matrix.os }}
+    name: Clippy & Test ${{ matrix.os }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # os: [ubuntu-latest, macos-latest]
-        os: [ubuntu-latest]
-        rust:
-          - 1.88.0
-        target:
-          - ""
-        features:
-          - ""
+        include:
+          - rust: 1.88.0
+            os: ubuntu-latest
+            features: ""
+            target: "x86_64-unknown-linux-gnu"
+          - rust: 1.88.0
+            os: ubuntu-latest
+            features: ""
+            target: "x86_64-unknown-linux-musl"
+          - rust: 1.88.0
+            os: macos-latest
+            features: ""
+            target: "aarch64-apple-darwin"
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -59,29 +64,9 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           override: true
-      - name: cargo build
-        run: cargo build ${{ matrix.features }}
-      - name: cargo test
-        run: cargo test
-        env:
-          RUST_BACKTRACE: 1
-
-  build-musl:
-    name: Clippy & Test ubuntu-latest / MUSL 
-    runs-on: ubuntu-latest 
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - name: Install rust toolchain
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af
-        with:
-          toolchain: stable
-          override: true
           default: true
           components: clippy
-          target: x86_64-unknown-linux-musl
+          target: ${{ matrix.target }}
       - name: cargo build
         run: cargo build ${{ matrix.features }}
       - name: cargo test
