@@ -34,6 +34,24 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     }
 }
 
+/// This function tries to fetch a send timestamp from a single error queue message.
+///
+/// We assume that we get error queue messages for exactly two reasons:
+///  - When the driver has pushed a timestamp set up, in which timestamps will be present
+///  - When something has gone wrong in the send process after the return of the send*
+///    family of functions (such as an ICMP error).
+///
+/// In particular, we assume that the second scenario occurs independent of whether the first
+/// occurs, and therefore we fully ignore those messages, only logging them but never
+/// returning the message index, to avoid upper layers of interpreting the error as a marker
+/// that the timestamp is definitively unavailable.
+///
+/// Note that this means that we don't expect, and therefore don't report, any signal from
+/// the kernel that the message has been sent but there won't be timestamps available. This
+/// scenario is handled in the higher layers through timeouts.
+///
+/// The above are assumptions for us as the kernel does not clearly document precisely how
+/// this works, and we haven't had the capacity to do a full deep dive into the kernel source.
 fn fetch_send_timestamp_try_read(
     socket: &RawSocket,
 ) -> std::io::Result<Option<(u32, FullTimestampData)>> {
