@@ -288,8 +288,12 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         }
     }
 
-    // This potentially drops multiple timestamps. Therefore, it isn't really supposed to be used
-    // in a context where multiple places are sharing the socket.
+    /// Retrieves the timestamp for a given SendTimestampToken.
+    ///
+    /// If multiple tokens are still pending for a send timestamp, this function may
+    /// drop the timestamps for those tokens . Therefore, this should not be used in
+    /// contexts where the socket may also be polled or there may otherwise be multiple
+    /// tokens in use.
     async fn send_timestamp_for_transmit(
         &mut self,
         token: SendTimestampToken,
@@ -338,6 +342,10 @@ impl<A: NetworkAddress> Socket<A, Open> {
     }
 
     /// Send a packet to a given receiver on the socket.
+    ///
+    /// When used in combination with the polling send functions, if there are timestamps
+    /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
+    /// when calling this function.
     pub async fn send_to(&mut self, buf: &[u8], addr: A) -> std::io::Result<Option<Timestamp>> {
         let addr = addr.to_sockaddr(PrivateToken);
 
@@ -382,6 +390,10 @@ impl<A: NetworkAddress> Socket<A, Open> {
     }
 
     /// Send a packet to a given receiver on the socket, using the specified origin address.
+    ///
+    /// When used in combination with the polling send functions, if there are timestamps
+    /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
+    /// when calling this function.
     pub async fn send_from_to(
         &mut self,
         buf: &[u8],
@@ -447,6 +459,10 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     }
 
     /// Send a packet on the socket.
+    ///
+    /// When used in combination with the polling send functions, if there are timestamps
+    /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
+    /// when calling this function.
     pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
         if let Some(token) = self
             .socket
@@ -486,6 +502,11 @@ impl<A: NetworkAddress> Socket<A, Connected> {
         }
     }
 
+    /// Send a packet on the socket, with the given local address.
+    ///
+    /// When used in combination with the polling send functions, if there are timestamps
+    /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
+    /// when calling this function.
     pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<Option<Timestamp>> {
         let from = from.to_sockaddr(PrivateToken);
 

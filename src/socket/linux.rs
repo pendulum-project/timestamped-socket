@@ -22,7 +22,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) async fn fetch_send_timestamp(
         socket: Arc<AsyncFd<RawSocket>>,
     ) -> std::io::Result<(u32, FullTimestampData)> {
-        let try_read = |socket: &RawSocket| Self::fetch_send_timestamp_try_read(socket);
+        let try_read = |socket: &RawSocket| fetch_send_timestamp_try_read(socket);
 
         loop {
             // the timestamp being available triggers the error interest
@@ -32,50 +32,50 @@ impl<A: NetworkAddress, S> Socket<A, S> {
             }
         }
     }
+}
 
-    pub(super) fn fetch_send_timestamp_try_read(
-        socket: &RawSocket,
-    ) -> std::io::Result<Option<(u32, FullTimestampData)>> {
-        let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
+fn fetch_send_timestamp_try_read(
+    socket: &RawSocket,
+) -> std::io::Result<Option<(u32, FullTimestampData)>> {
+    let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
-        // NOTE: this read could block!
-        let (_, control_messages, _) =
-            socket.receive_message(&mut [], &mut control_buf, MessageQueue::Error)?;
+    // NOTE: this read could block!
+    let (_, control_messages, _) =
+        socket.receive_message(&mut [], &mut control_buf, MessageQueue::Error)?;
 
-        let mut send_ts = None;
-        let mut counter = None;
-        for msg in control_messages {
-            match msg {
-                ControlMessage::Timestamping { software, hardware } => {
-                    send_ts = Some(FullTimestampData { software, hardware });
+    let mut send_ts = None;
+    let mut counter = None;
+    for msg in control_messages {
+        match msg {
+            ControlMessage::Timestamping { software, hardware } => {
+                send_ts = Some(FullTimestampData { software, hardware });
+            }
+
+            ControlMessage::ReceiveError(error) => {
+                // the timestamping does not set a message; if there is a message, that means
+                // something else is wrong, and we want to know about it.
+                if error.ee_errno as libc::c_int != libc::ENOMSG {
+                    tracing::debug!(error.ee_data, "error message on the MSG_ERRQUEUE");
                 }
 
-                ControlMessage::ReceiveError(error) => {
-                    // the timestamping does not set a message; if there is a message, that means
-                    // something else is wrong, and we want to know about it.
-                    if error.ee_errno as libc::c_int != libc::ENOMSG {
-                        tracing::debug!(error.ee_data, "error message on the MSG_ERRQUEUE");
-                    }
+                counter = Some(error.ee_data);
+            }
 
-                    counter = Some(error.ee_data);
-                }
+            ControlMessage::DestinationIp(_) => {
+                tracing::debug!("unexpected destination ip control message");
+            }
 
-                ControlMessage::DestinationIp(_) => {
-                    tracing::debug!("unexpected destination ip control message");
-                }
-
-                ControlMessage::Other(msg) => {
-                    tracing::debug!(
-                        msg.cmsg_level,
-                        msg.cmsg_type,
-                        "unexpected message on the MSG_ERRQUEUE",
-                    );
-                }
+            ControlMessage::Other(msg) => {
+                tracing::debug!(
+                    msg.cmsg_level,
+                    msg.cmsg_type,
+                    "unexpected message on the MSG_ERRQUEUE",
+                );
             }
         }
-
-        Ok(counter.zip(send_ts))
     }
+
+    Ok(counter.zip(send_ts))
 }
 
 pub(super) fn configure_timestamping(
