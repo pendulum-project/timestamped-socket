@@ -11,7 +11,7 @@ use crate::{
     interface::{lookup_phc, InterfaceName},
     networkaddress::{sealed::PrivateToken, EthernetAddress, MacAddress, NetworkAddress},
     raw_socket::RawSocket,
-    socket::FullTimestampData,
+    socket::TimestampData,
 };
 
 use super::{InterfaceTimestampMode, Open, Socket};
@@ -21,7 +21,7 @@ const SOF_TIMESTAMPING_BIND_PHC: libc::c_uint = 1 << 15;
 impl<A: NetworkAddress, S> Socket<A, S> {
     pub(super) async fn fetch_send_timestamp(
         socket: Arc<AsyncFd<RawSocket>>,
-    ) -> std::io::Result<(u32, FullTimestampData)> {
+    ) -> std::io::Result<(u32, TimestampData)> {
         let try_read = |socket: &RawSocket| fetch_send_timestamp_try_read(socket);
 
         loop {
@@ -54,7 +54,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
 /// this works, and we haven't had the capacity to do a full deep dive into the kernel source.
 fn fetch_send_timestamp_try_read(
     socket: &RawSocket,
-) -> std::io::Result<Option<(u32, FullTimestampData)>> {
+) -> std::io::Result<Option<(u32, TimestampData)>> {
     let mut control_buf = [0; EXPECTED_MAX_CMSG_SIZE];
 
     // NOTE: this read could block!
@@ -66,7 +66,11 @@ fn fetch_send_timestamp_try_read(
     for msg in control_messages {
         match msg {
             ControlMessage::Timestamping { software, hardware } => {
-                send_ts = Some(FullTimestampData { software, hardware });
+                send_ts = Some(TimestampData {
+                    software,
+                    hardware,
+                    timestamp_mode: InterfaceTimestampMode::default(),
+                });
             }
 
             ControlMessage::ReceiveError(error) => {
@@ -487,12 +491,17 @@ mod tests {
         .unwrap();
 
         let before = SystemTime::now();
-        let send_ts = b.send(&[1, 2, 3]).await.unwrap().unwrap();
+        let send_ts = b
+            .send(&[1, 2, 3])
+            .await
+            .unwrap()
+            .selected_timestamp()
+            .unwrap();
         let after = SystemTime::now();
 
         let mut buf = [0; 4];
         let recv_result = a.recv(&mut buf).await.unwrap();
-        let recv_ts = recv_result.timestamp.unwrap();
+        let recv_ts = recv_result.timestamp_data.selected_timestamp().unwrap();
 
         let before = before
             .duration_since(SystemTime::UNIX_EPOCH)

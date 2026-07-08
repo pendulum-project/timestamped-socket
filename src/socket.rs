@@ -33,9 +33,44 @@ pub use self::linux::*;
 use self::macos::*;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
-pub struct FullTimestampData {
+pub struct TimestampData {
+    /// The timestamping mode requested by the user when creating the socket.
+    ///
+    /// If this was not available, this is set to `None`.
+    pub timestamp_mode: InterfaceTimestampMode,
+    /// The hardware based timestamp returned by the OS
     pub hardware: Option<Timestamp>,
+    /// The software based timestamp returned by the OS
     pub software: Option<Timestamp>,
+}
+
+impl TimestampData {
+    /// Creates a new `TimestampData` with the given requested timestamping mode, but no timestamps.
+    fn empty(timestamp_mode: InterfaceTimestampMode) -> Self {
+        Self::default().with_timestamp_mode(timestamp_mode)
+    }
+
+    /// Returns the timestamp type selected by the requested timestamping mode.
+    ///
+    /// If the requested timestamping mode is `None` or if the requested timestamp
+    /// is not available, this function will return `None`.
+    pub fn selected_timestamp(self) -> Option<Timestamp> {
+        use InterfaceTimestampMode::*;
+
+        match self.timestamp_mode {
+            SoftwareAll | SoftwareRecv => self.software,
+            HardwareAll | HardwareRecv | HardwarePTPAll | HardwarePTPRecv => self.hardware,
+            None => Option::None,
+        }
+    }
+
+    /// Create a new `TimestampData` with the given requested timestamping mode.
+    fn with_timestamp_mode(self, timestamp_mode: InterfaceTimestampMode) -> Self {
+        Self {
+            timestamp_mode,
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Default)]
@@ -91,26 +126,12 @@ impl From<GeneralTimestampMode> for InterfaceTimestampMode {
     }
 }
 
-fn select_timestamp(
-    mode: InterfaceTimestampMode,
-    timestamp_data: FullTimestampData,
-) -> Option<Timestamp> {
-    use InterfaceTimestampMode::*;
-
-    match mode {
-        SoftwareAll | SoftwareRecv => timestamp_data.software,
-        HardwareAll | HardwareRecv | HardwarePTPAll | HardwarePTPRecv => timestamp_data.hardware,
-        None => Option::None,
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RecvResult<A> {
     pub bytes_read: usize,
     pub remote_addr: A,
     pub local_addr: A,
-    pub timestamp: Option<Timestamp>,
-    pub full_timestamp_data: FullTimestampData,
+    pub timestamp_data: TimestampData,
 }
 
 #[derive(Debug)]
@@ -144,7 +165,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         let (bytes_read, control_messages, remote_address) =
             socket.receive_message(buf, &mut control_buf, MessageQueue::Normal)?;
 
-        let mut full_timestamp_data = FullTimestampData::default();
+        let mut timestamp_data = TimestampData::empty(self.timestamp_mode);
         let mut local_addr = self.local_addr;
 
         // Loops through the control messages, but we should only get a single message
@@ -155,8 +176,8 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     tracing::trace!("Timestamps: {:?} {:?}", software, hardware);
 
                     // Keep the first timestamp of each kind
-                    full_timestamp_data.software = full_timestamp_data.software.or(software);
-                    full_timestamp_data.hardware = full_timestamp_data.hardware.or(hardware);
+                    timestamp_data.software = timestamp_data.software.or(software);
+                    timestamp_data.hardware = timestamp_data.hardware.or(hardware);
                 }
 
                 #[cfg(target_os = "linux")]
@@ -186,14 +207,11 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         let remote_addr =
             A::from_sockaddr(remote_address, PrivateToken).ok_or(std::io::ErrorKind::Other)?;
 
-        let timestamp = select_timestamp(self.timestamp_mode, full_timestamp_data);
-
         Ok(RecvResult {
             bytes_read,
             remote_addr,
             local_addr,
-            timestamp,
-            full_timestamp_data,
+            timestamp_data,
         })
     }
 
@@ -260,7 +278,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     /// be stored to simulate the existence of a poll function.
     pub fn get_send_timestamp(
         &self,
-    ) -> impl std::future::Future<Output = std::io::Result<(SendTimestampToken, FullTimestampData)>>
+    ) -> impl std::future::Future<Output = std::io::Result<(SendTimestampToken, TimestampData)>>
            + Send
            + Sync
            + 'static {
@@ -274,7 +292,10 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                 #[cfg(target_os = "linux")]
                 {
                     let (counter, timestamp) = Self::fetch_send_timestamp(socket).await?;
-                    Ok((SendTimestampToken(counter), timestamp))
+                    Ok((
+                        SendTimestampToken(counter),
+                        timestamp.with_timestamp_mode(timestamp_mode),
+                    ))
                 }
 
                 #[cfg(not(target_os = "linux"))]
@@ -297,7 +318,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
     async fn send_timestamp_for_transmit(
         &mut self,
         token: SendTimestampToken,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<TimestampData> {
         use std::time::Duration;
 
         const TIMEOUT: Duration = Duration::from_millis(200);
@@ -306,12 +327,12 @@ impl<A: NetworkAddress, S> Socket<A, S> {
             loop {
                 let (cur_token, timestamp_data) = self.get_send_timestamp().await?;
                 if cur_token == token {
-                    return Ok(select_timestamp(self.timestamp_mode, timestamp_data));
+                    return Ok(timestamp_data.with_timestamp_mode(self.timestamp_mode));
                 }
             }
         })
         .await
-        .unwrap_or(Ok(None))
+        .unwrap_or(Ok(TimestampData::empty(self.timestamp_mode)))
     }
 }
 
@@ -346,7 +367,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
     /// When used in combination with the polling send functions, if there are timestamps
     /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
     /// when calling this function.
-    pub async fn send_to(&mut self, buf: &[u8], addr: A) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send_to(&mut self, buf: &[u8], addr: A) -> std::io::Result<TimestampData> {
         let addr = addr.to_sockaddr(PrivateToken);
 
         if let Some(token) = self
@@ -358,7 +379,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
         {
             self.send_timestamp_for_transmit(token).await
         } else {
-            Ok(None)
+            Ok(TimestampData::empty(self.timestamp_mode))
         }
     }
 
@@ -399,7 +420,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
         buf: &[u8],
         from: A,
         to: A,
-    ) -> std::io::Result<Option<Timestamp>> {
+    ) -> std::io::Result<TimestampData> {
         let from = from.to_sockaddr(PrivateToken);
         let to = to.to_sockaddr(PrivateToken);
 
@@ -412,7 +433,7 @@ impl<A: NetworkAddress> Socket<A, Open> {
         {
             self.send_timestamp_for_transmit(token).await
         } else {
-            Ok(None)
+            Ok(TimestampData::empty(self.timestamp_mode))
         }
     }
 
@@ -463,7 +484,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     /// When used in combination with the polling send functions, if there are timestamps
     /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
     /// when calling this function.
-    pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send(&mut self, buf: &[u8]) -> std::io::Result<TimestampData> {
         if let Some(token) = self
             .socket
             .async_io(Interest::WRITABLE, |socket| {
@@ -473,7 +494,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
         {
             self.send_timestamp_for_transmit(token).await
         } else {
-            Ok(None)
+            Ok(TimestampData::empty(self.timestamp_mode))
         }
     }
 
@@ -507,7 +528,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
     /// When used in combination with the polling send functions, if there are timestamps
     /// pending for some `SendTimestampToken`, these may be skipped and become unavailable
     /// when calling this function.
-    pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<Option<Timestamp>> {
+    pub async fn send_from(&mut self, buf: &[u8], from: A) -> std::io::Result<TimestampData> {
         let from = from.to_sockaddr(PrivateToken);
 
         if let Some(token) = self
@@ -519,7 +540,7 @@ impl<A: NetworkAddress> Socket<A, Connected> {
         {
             self.send_timestamp_for_transmit(token).await
         } else {
-            Ok(None)
+            Ok(TimestampData::empty(self.timestamp_mode))
         }
     }
 }
