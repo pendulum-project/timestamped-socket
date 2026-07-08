@@ -105,7 +105,8 @@ pub struct RecvResult<A> {
     pub bytes_read: usize,
     pub remote_addr: A,
     pub local_addr: A,
-    pub timestamp: Option<Timestamp>,
+    /// The timestamp of the type requested when opening the socket.
+    pub selected_timestamp: Option<Timestamp>,
     pub full_timestamp_data: FullTimestampData,
 }
 
@@ -188,7 +189,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
                     bytes_read,
                     remote_addr,
                     local_addr,
-                    timestamp,
+                    selected_timestamp: timestamp,
                     full_timestamp_data,
                 })
             })

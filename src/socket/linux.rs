@@ -505,7 +505,7 @@ mod tests {
 
         let mut buf = [0; 4];
         let recv_result = a.recv(&mut buf).await.unwrap();
-        let recv_ts = recv_result.timestamp.unwrap();
+        let recv_ts = recv_result.selected_timestamp.unwrap();
 
         let before = before
             .duration_since(SystemTime::UNIX_EPOCH)
