@@ -116,6 +116,15 @@ pub enum InterfaceTimestampMode {
     None,
 }
 
+impl InterfaceTimestampMode {
+    pub fn can_timestamp_tx(&self) -> bool {
+        matches!(
+            self,
+            Self::HardwarePTPAll | Self::SoftwareAll | Self::HardwareAll
+        )
+    }
+}
+
 impl From<GeneralTimestampMode> for InterfaceTimestampMode {
     fn from(value: GeneralTimestampMode) -> Self {
         match value {
@@ -247,10 +256,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         &self,
         send_call: impl FnOnce() -> std::io::Result<()>,
     ) -> std::io::Result<Option<SendTimestampToken>> {
-        if matches!(
-            self.timestamp_mode,
-            InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-        ) {
+        if self.timestamp_mode.can_timestamp_tx() {
             #[cfg(target_os = "linux")]
             {
                 let mut counter = self.send_counter.lock().unwrap();
@@ -285,10 +291,7 @@ impl<A: NetworkAddress, S> Socket<A, S> {
         let timestamp_mode = self.timestamp_mode;
         let socket = self.socket.clone();
         async move {
-            if matches!(
-                timestamp_mode,
-                InterfaceTimestampMode::HardwarePTPAll | InterfaceTimestampMode::SoftwareAll
-            ) {
+            if timestamp_mode.can_timestamp_tx() {
                 #[cfg(target_os = "linux")]
                 {
                     let (counter, timestamp) = Self::fetch_send_timestamp(socket).await?;
