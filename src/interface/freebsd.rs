@@ -52,7 +52,8 @@ impl ChangeDetector {
         cerr(unsafe { libc::ioctl(fd, libc::FIONBIO, &nonblocking) })?;
 
         Ok(ChangeDetector {
-            fd: AsyncFd::new(fd)?,
+            // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+            fd: unsafe { AsyncFd::register(fd)? },
         })
     }
 

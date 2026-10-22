@@ -582,7 +582,8 @@ pub fn open_ip(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,
@@ -611,7 +612,8 @@ pub fn open_ipv4(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,
@@ -641,7 +643,8 @@ pub fn open_ipv6(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,
@@ -671,7 +674,8 @@ pub fn connect_address(
 
     Ok(Socket {
         timestamp_mode: timestamping.into(),
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         #[cfg(target_os = "linux")]
         send_counter: std::sync::Mutex::new(0),
         local_addr,

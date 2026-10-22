@@ -187,7 +187,8 @@ pub fn open_interface_udp(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -229,7 +230,8 @@ pub fn open_interface_udp4(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -272,7 +274,8 @@ pub fn open_interface_udp6(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
@@ -321,7 +324,8 @@ pub fn open_interface_ethernet(
 
     Ok(Socket {
         timestamp_mode: timestamping,
-        socket: Arc::new(AsyncFd::new(socket)?),
+        // SAFETY: `socket` is valid & no longer directly accessible after `register` completes.
+        socket: Arc::new(unsafe { AsyncFd::register(socket)? }),
         send_counter: std::sync::Mutex::new(0),
         local_addr,
         _state: PhantomData,
